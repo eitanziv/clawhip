@@ -16,7 +16,7 @@ pub struct AppConfig {
     #[serde(default)]
     pub defaults: DefaultsConfig,
     #[serde(default)]
-    pub routes: BTreeMap<String, RouteConfig>,
+    pub routes: Vec<RouteRule>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -41,7 +41,10 @@ impl Default for DefaultsConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct RouteConfig {
+pub struct RouteRule {
+    pub event: String,
+    #[serde(default)]
+    pub filter: BTreeMap<String, String>,
     pub channel: Option<String>,
     pub format: Option<MessageFormat>,
     pub template: Option<String>,
@@ -85,13 +88,6 @@ impl AppConfig {
             .or_else(|| self.discord.bot_token.clone())
     }
 
-    pub fn route(&self, key: &str) -> Option<&RouteConfig> {
-        self.routes.get(key).or_else(|| {
-            key.split_once('.')
-                .and_then(|(prefix, _)| self.routes.get(prefix))
-        })
-    }
-
     pub fn run_interactive_editor(&mut self, path: &Path) -> Result<()> {
         println!("clawhip config editor");
         println!("Path: {}", path.display());
@@ -103,7 +99,7 @@ impl AppConfig {
             println!("  1) Set Discord bot token");
             println!("  2) Set default channel");
             println!("  3) Set default format");
-            println!("  4) Add or update route");
+            println!("  4) Add route");
             println!("  5) Remove route");
             println!("  6) Save and exit");
             println!("  7) Exit without saving");
@@ -112,7 +108,7 @@ impl AppConfig {
                 "1" => self.discord.bot_token = empty_to_none(prompt("Bot token")?),
                 "2" => self.defaults.channel = empty_to_none(prompt("Default channel")?),
                 "3" => self.defaults.format = prompt_format(Some(self.defaults.format.clone()))?,
-                "4" => self.upsert_route()?,
+                "4" => self.add_route()?,
                 "5" => self.remove_route()?,
                 "6" => {
                     self.save(path)?;
@@ -154,10 +150,22 @@ impl AppConfig {
             println!("  Routes: <none>");
         } else {
             println!("  Routes:");
-            for (name, route) in &self.routes {
+            for (index, route) in self.routes.iter().enumerate() {
+                let filter = if route.filter.is_empty() {
+                    "<none>".to_string()
+                } else {
+                    route
+                        .filter
+                        .iter()
+                        .map(|(key, value)| format!("{key}={value}"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                };
                 println!(
-                    "    - {} => channel={}, format={}, template={}",
-                    name,
+                    "    [{}] event={}, filter={}, channel={}, format={}, template={}",
+                    index,
+                    route.event,
+                    filter,
                     route.channel.as_deref().unwrap_or("<default>"),
                     route
                         .format
@@ -171,36 +179,35 @@ impl AppConfig {
         println!();
     }
 
-    fn upsert_route(&mut self) -> Result<()> {
-        let name = prompt("Route name (examples: custom, github.issue-opened, tmux.keyword)")?;
-        let name = name.trim().to_string();
-        if name.is_empty() {
-            println!("Route name cannot be empty.");
+    fn add_route(&mut self) -> Result<()> {
+        let event = prompt("Event pattern (examples: github.*, tmux.*, git.commit)")?;
+        let event = event.trim().to_string();
+        if event.is_empty() {
+            println!("Event pattern cannot be empty.");
             return Ok(());
         }
-
-        let existing = self.routes.get(&name).cloned().unwrap_or_default();
-        let channel = prompt_with_default("Route channel", existing.channel.as_deref())?;
-        let format = prompt_format(existing.format.clone())?;
-        let template = prompt_with_default("Route template", existing.template.as_deref())?;
-
-        self.routes.insert(
-            name,
-            RouteConfig {
-                channel: empty_to_none(channel),
-                format: Some(format),
-                template: empty_to_none(template),
-            },
-        );
+        let filter = prompt("Filter pairs (comma-separated key=value, optional)")?;
+        let channel = prompt("Route channel (blank = use default)")?;
+        let format = prompt_format(None)?;
+        let template = prompt("Route template (blank = use built-in formatter)")?;
+        self.routes.push(RouteRule {
+            event,
+            filter: parse_filter_map(&filter),
+            channel: empty_to_none(channel),
+            format: Some(format),
+            template: empty_to_none(template),
+        });
         Ok(())
     }
 
     fn remove_route(&mut self) -> Result<()> {
-        let name = prompt("Route name to remove")?;
-        if self.routes.remove(name.trim()).is_some() {
-            println!("Removed route {}", name.trim());
+        let index = prompt("Route index to remove")?;
+        let index: usize = index.trim().parse()?;
+        if index < self.routes.len() {
+            self.routes.remove(index);
+            println!("Removed route {index}");
         } else {
-            println!("No route named {}", name.trim());
+            println!("No route at index {index}");
         }
         Ok(())
     }
@@ -212,19 +219,6 @@ fn prompt(label: &str) -> Result<String> {
     let mut value = String::new();
     io::stdin().read_line(&mut value)?;
     Ok(value.trim_end().to_string())
-}
-
-fn prompt_with_default(label: &str, default: Option<&str>) -> Result<String> {
-    let response = match default {
-        Some(default) => prompt(&format!("{label} [{default}]"))?,
-        None => prompt(label)?,
-    };
-
-    if response.trim().is_empty() {
-        Ok(default.unwrap_or_default().to_string())
-    } else {
-        Ok(response)
-    }
 }
 
 fn prompt_format(default: Option<MessageFormat>) -> Result<MessageFormat> {
@@ -239,32 +233,20 @@ fn prompt_format(default: Option<MessageFormat>) -> Result<MessageFormat> {
     MessageFormat::from_label(input.trim())
 }
 
+fn parse_filter_map(input: &str) -> BTreeMap<String, String> {
+    input
+        .split(',')
+        .filter_map(|pair| pair.split_once('='))
+        .map(|(key, value)| (key.trim().to_string(), value.trim().to_string()))
+        .filter(|(key, value)| !key.is_empty() && !value.is_empty())
+        .collect()
+}
+
 fn empty_to_none(value: String) -> Option<String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         None
     } else {
         Some(trimmed.to_string())
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn route_lookup_falls_back_to_prefix() {
-        let mut config = AppConfig::default();
-        config.routes.insert(
-            "github".to_string(),
-            RouteConfig {
-                channel: Some("123".into()),
-                format: None,
-                template: None,
-            },
-        );
-
-        let route = config.route("github.issue-opened").unwrap();
-        assert_eq!(route.channel.as_deref(), Some("123"));
     }
 }

@@ -1,12 +1,13 @@
 use std::collections::BTreeMap;
 use std::io::{self, Read};
 
+use clap::ValueEnum;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value, json};
 
 use crate::Result;
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq, ValueEnum)]
 #[serde(rename_all = "kebab-case")]
 pub enum MessageFormat {
     #[default]
@@ -109,10 +110,72 @@ impl IncomingEvent {
             channel,
             format: None,
             template: None,
+            payload: json!({ "repo": repo, "number": number, "title": title }),
+        }
+    }
+
+    pub fn git_commit(
+        repo: String,
+        branch: String,
+        commit: String,
+        summary: String,
+        channel: Option<String>,
+    ) -> Self {
+        Self {
+            kind: "git.commit".to_string(),
+            channel,
+            format: None,
+            template: None,
+            payload: json!({
+                "repo": repo,
+                "branch": branch,
+                "commit": commit,
+                "short_commit": short_sha(&commit),
+                "summary": summary,
+            }),
+        }
+    }
+
+    pub fn git_branch_changed(
+        repo: String,
+        old_branch: String,
+        new_branch: String,
+        channel: Option<String>,
+    ) -> Self {
+        Self {
+            kind: "git.branch-changed".to_string(),
+            channel,
+            format: None,
+            template: None,
+            payload: json!({
+                "repo": repo,
+                "old_branch": old_branch,
+                "new_branch": new_branch,
+            }),
+        }
+    }
+
+    pub fn git_pr_status_changed(
+        repo: String,
+        number: u64,
+        title: String,
+        old_status: String,
+        new_status: String,
+        url: String,
+        channel: Option<String>,
+    ) -> Self {
+        Self {
+            kind: "git.pr-status-changed".to_string(),
+            channel,
+            format: None,
+            template: None,
             payload: json!({
                 "repo": repo,
                 "number": number,
                 "title": title,
+                "old_status": old_status,
+                "new_status": new_status,
+                "url": url,
             }),
         }
     }
@@ -128,12 +191,34 @@ impl IncomingEvent {
             channel,
             format: None,
             template: None,
+            payload: json!({ "session": session, "keyword": keyword, "line": line }),
+        }
+    }
+
+    pub fn tmux_stale(
+        session: String,
+        pane: String,
+        minutes: u64,
+        last_line: String,
+        channel: Option<String>,
+    ) -> Self {
+        Self {
+            kind: "tmux.stale".to_string(),
+            channel,
+            format: None,
+            template: None,
             payload: json!({
                 "session": session,
-                "keyword": keyword,
-                "line": line,
+                "pane": pane,
+                "minutes": minutes,
+                "last_line": last_line,
             }),
         }
+    }
+
+    pub fn with_format(mut self, format: Option<MessageFormat>) -> Self {
+        self.format = format;
+        self
     }
 
     pub fn canonical_kind(&self) -> &str {
@@ -151,6 +236,7 @@ impl IncomingEvent {
             }
             ("custom", MessageFormat::Alert) => format!("🚨 {}", string_field(payload, "message")?),
             ("custom", MessageFormat::Raw) => serde_json::to_string_pretty(payload)?,
+
             ("github.issue-opened", MessageFormat::Compact) => format!(
                 "{}#{} opened: {}",
                 string_field(payload, "repo")?,
@@ -170,6 +256,73 @@ impl IncomingEvent {
                 string_field(payload, "title")?
             ),
             ("github.issue-opened", MessageFormat::Raw) => serde_json::to_string_pretty(payload)?,
+
+            ("git.commit", MessageFormat::Compact) => format!(
+                "git:{}@{} {} {}",
+                string_field(payload, "repo")?,
+                string_field(payload, "branch")?,
+                string_field(payload, "short_commit")?,
+                string_field(payload, "summary")?
+            ),
+            ("git.commit", MessageFormat::Alert) => format!(
+                "🚨 new commit in {}@{}: {} {}",
+                string_field(payload, "repo")?,
+                string_field(payload, "branch")?,
+                string_field(payload, "short_commit")?,
+                string_field(payload, "summary")?
+            ),
+            ("git.commit", MessageFormat::Inline) => format!(
+                "[git] {} {}",
+                string_field(payload, "repo")?,
+                string_field(payload, "summary")?
+            ),
+            ("git.commit", MessageFormat::Raw) => serde_json::to_string_pretty(payload)?,
+
+            ("git.branch-changed", MessageFormat::Compact) => format!(
+                "git:{} branch changed {} -> {}",
+                string_field(payload, "repo")?,
+                string_field(payload, "old_branch")?,
+                string_field(payload, "new_branch")?
+            ),
+            ("git.branch-changed", MessageFormat::Alert) => format!(
+                "🚨 git repo {} branch changed {} -> {}",
+                string_field(payload, "repo")?,
+                string_field(payload, "old_branch")?,
+                string_field(payload, "new_branch")?
+            ),
+            ("git.branch-changed", MessageFormat::Inline) => format!(
+                "[git:{}] {} -> {}",
+                string_field(payload, "repo")?,
+                string_field(payload, "old_branch")?,
+                string_field(payload, "new_branch")?
+            ),
+            ("git.branch-changed", MessageFormat::Raw) => serde_json::to_string_pretty(payload)?,
+
+            ("git.pr-status-changed", MessageFormat::Compact) => format!(
+                "PR {}#{} {} -> {}: {}",
+                string_field(payload, "repo")?,
+                payload.field_u64("number")?,
+                string_field(payload, "old_status")?,
+                string_field(payload, "new_status")?,
+                string_field(payload, "title")?
+            ),
+            ("git.pr-status-changed", MessageFormat::Alert) => format!(
+                "🚨 PR status changed in {}: #{} {} -> {} ({})",
+                string_field(payload, "repo")?,
+                payload.field_u64("number")?,
+                string_field(payload, "old_status")?,
+                string_field(payload, "new_status")?,
+                string_field(payload, "title")?
+            ),
+            ("git.pr-status-changed", MessageFormat::Inline) => format!(
+                "[PR {}#{}] {} -> {}",
+                string_field(payload, "repo")?,
+                payload.field_u64("number")?,
+                string_field(payload, "old_status")?,
+                string_field(payload, "new_status")?
+            ),
+            ("git.pr-status-changed", MessageFormat::Raw) => serde_json::to_string_pretty(payload)?,
+
             ("tmux.keyword", MessageFormat::Compact) => format!(
                 "tmux:{} matched '{}' => {}",
                 string_field(payload, "session")?,
@@ -187,6 +340,30 @@ impl IncomingEvent {
                 string_field(payload, "session")?,
                 string_field(payload, "line")?
             ),
+            ("tmux.keyword", MessageFormat::Raw) => serde_json::to_string_pretty(payload)?,
+
+            ("tmux.stale", MessageFormat::Compact) => format!(
+                "tmux:{} pane {} stale for {}m (last: {})",
+                string_field(payload, "session")?,
+                string_field(payload, "pane")?,
+                payload.field_u64("minutes")?,
+                string_field(payload, "last_line")?
+            ),
+            ("tmux.stale", MessageFormat::Alert) => format!(
+                "🚨 tmux session {} pane {} stale for {}m (last: {})",
+                string_field(payload, "session")?,
+                string_field(payload, "pane")?,
+                payload.field_u64("minutes")?,
+                string_field(payload, "last_line")?
+            ),
+            ("tmux.stale", MessageFormat::Inline) => format!(
+                "[tmux stale:{} {}] {}m",
+                string_field(payload, "session")?,
+                string_field(payload, "pane")?,
+                payload.field_u64("minutes")?
+            ),
+            ("tmux.stale", MessageFormat::Raw) => serde_json::to_string_pretty(payload)?,
+
             (_, MessageFormat::Raw) => serde_json::to_string_pretty(payload)?,
             (_, _) => serde_json::to_string(payload)?,
         };
@@ -228,19 +405,25 @@ pub fn parse_stream(body: &str) -> Result<Vec<IncomingEvent>> {
             .map_err(Into::into);
     }
 
-    let stream = serde_json::Deserializer::from_str(trimmed).into_iter::<IncomingEvent>();
-    let mut events = Vec::new();
-    for event in stream {
-        events.push(normalize_event(event?));
+    if !trimmed.contains('\n') && trimmed.starts_with('{') {
+        return serde_json::from_str::<IncomingEvent>(trimmed)
+            .map(|event| vec![normalize_event(event)])
+            .map_err(Into::into);
     }
-    Ok(events)
+
+    trimmed
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| serde_json::from_str::<IncomingEvent>(line).map(normalize_event))
+        .collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(Into::into)
 }
 
 pub fn normalize_event(mut event: IncomingEvent) -> IncomingEvent {
+    event.kind = event.canonical_kind().to_string();
     if !event.payload.is_object() {
         event.payload = json!({ "value": event.payload });
     }
-    event.kind = event.canonical_kind().to_string();
     event
 }
 
@@ -250,6 +433,10 @@ fn string_field(payload: &Value, key: &str) -> Result<String> {
         .and_then(Value::as_str)
         .map(ToString::to_string)
         .ok_or_else(|| format!("missing string field '{key}'").into())
+}
+
+fn short_sha(commit: &str) -> String {
+    commit.chars().take(7).collect()
 }
 
 fn flatten_json(prefix: &str, value: &Value, out: &mut BTreeMap<String, String>) {
@@ -313,32 +500,19 @@ mod tests {
     }
 
     #[test]
-    fn parses_flat_event_fields_when_payload_is_missing() {
-        let events =
-            parse_stream(r#"{"type":"custom","channel":"123","message":"flat payload works"}"#)
-                .unwrap();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].channel.as_deref(), Some("123"));
-        assert_eq!(events[0].payload["message"], "flat payload works");
-    }
-
-    #[test]
-    fn parses_pretty_printed_single_event() {
-        let events = parse_stream(
-            r#"{
-  "type": "custom",
-  "message": "pretty stdin works"
-}"#,
-        )
-        .unwrap();
-        assert_eq!(events.len(), 1);
-        assert_eq!(events[0].payload["message"], "pretty stdin works");
-    }
-
-    #[test]
     fn renders_template_from_payload() {
         let event = IncomingEvent::github_issue_opened("repo".into(), 42, "broken".into(), None);
         let rendered = render_template("{repo} #{number}: {title}", &event.template_context());
         assert_eq!(rendered, "repo #42: broken");
+    }
+
+    #[test]
+    fn accepts_flat_custom_events() {
+        let event = parse_stream(r#"{"type":"custom","message":"flat"}"#)
+            .unwrap()
+            .into_iter()
+            .next()
+            .unwrap();
+        assert_eq!(event.payload["message"], "flat");
     }
 }

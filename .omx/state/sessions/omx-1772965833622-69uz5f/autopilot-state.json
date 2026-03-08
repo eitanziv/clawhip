@@ -1,7 +1,0 @@
-{
-  "active": true,
-  "current_phase": "execution",
-  "started_at": "2026-03-08T10:33:30Z",
-  "task_description": "Build clawhip as a standalone Rust event-to-channel notification router with Discord REST delivery, CLI/event ingestion, config management, and HTTP webhook serving.",
-  "context_snapshot_path": ".omx/context/clawhip-build-20260308T103330Z.md"
-}

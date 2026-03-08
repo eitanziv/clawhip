@@ -69,36 +69,87 @@ async fn post_github(
         .get("x-github-event")
         .and_then(|value| value.to_str().ok())
         .unwrap_or_default();
-
     let action = payload
         .get("action")
         .and_then(Value::as_str)
         .unwrap_or_default();
-    if event_name != "issues" || action != "opened" {
-        return (
-            StatusCode::ACCEPTED,
-            Json(json!({ "ok": true, "ignored": true, "reason": "unsupported event" })),
-        )
-            .into_response();
-    }
 
-    let repo = payload
-        .pointer("/repository/full_name")
-        .and_then(Value::as_str)
-        .unwrap_or("unknown/unknown")
-        .to_string();
-    let number = payload
-        .pointer("/issue/number")
-        .and_then(Value::as_u64)
-        .unwrap_or_default();
-    let title = payload
-        .pointer("/issue/title")
-        .and_then(Value::as_str)
-        .unwrap_or("Untitled issue")
-        .to_string();
+    let dispatch_result = match event_name {
+        "issues" if action == "opened" => {
+            let repo = payload
+                .pointer("/repository/full_name")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown/unknown")
+                .to_string();
+            let number = payload
+                .pointer("/issue/number")
+                .and_then(Value::as_u64)
+                .unwrap_or_default();
+            let title = payload
+                .pointer("/issue/title")
+                .and_then(Value::as_str)
+                .unwrap_or("Untitled issue")
+                .to_string();
+            let event = IncomingEvent::github_issue_opened(repo, number, title, None);
+            state.router.dispatch(&event, state.discord.as_ref()).await
+        }
+        "pull_request" => {
+            let repo = payload
+                .pointer("/repository/full_name")
+                .and_then(Value::as_str)
+                .unwrap_or("unknown/unknown")
+                .to_string();
+            let number = payload
+                .pointer("/pull_request/number")
+                .or_else(|| payload.pointer("/number"))
+                .and_then(Value::as_u64)
+                .unwrap_or_default();
+            let title = payload
+                .pointer("/pull_request/title")
+                .and_then(Value::as_str)
+                .unwrap_or("Untitled pull request")
+                .to_string();
+            let url = payload
+                .pointer("/pull_request/html_url")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let merged = payload
+                .pointer("/pull_request/merged")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
 
-    let event = IncomingEvent::github_issue_opened(repo, number, title, None);
-    match state.router.dispatch(&event, state.discord.as_ref()).await {
+            let transition = match action {
+                "opened" => Some(("<new>".to_string(), "open".to_string())),
+                "reopened" => Some(("closed".to_string(), "open".to_string())),
+                "closed" if merged => Some(("open".to_string(), "merged".to_string())),
+                "closed" => Some(("open".to_string(), "closed".to_string())),
+                _ => None,
+            };
+
+            if let Some((old_status, new_status)) = transition {
+                let event = IncomingEvent::git_pr_status_changed(
+                    repo, number, title, old_status, new_status, url, None,
+                );
+                state.router.dispatch(&event, state.discord.as_ref()).await
+            } else {
+                return (
+                    StatusCode::ACCEPTED,
+                    Json(json!({ "ok": true, "ignored": true, "reason": "unsupported pull_request action" })),
+                )
+                    .into_response();
+            }
+        }
+        _ => {
+            return (
+                StatusCode::ACCEPTED,
+                Json(json!({ "ok": true, "ignored": true, "reason": "unsupported event" })),
+            )
+                .into_response();
+        }
+    };
+
+    match dispatch_result {
         Ok(()) => (StatusCode::ACCEPTED, Json(json!({ "ok": true }))).into_response(),
         Err(error) => (
             StatusCode::BAD_REQUEST,
