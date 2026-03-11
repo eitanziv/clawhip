@@ -113,3 +113,10 @@ On March 8, 2026, a real validation was run for the GitHub issue-opened monitor 
 - daemon monitor emitted `github.issue-opened`
 - real Discord delivery observed with route-level mention prepended
 - issue closed after verification
+
+On March 11, 2026, a real validation was run for the custom send path:
+
+- local daemon health/status returned ok on `http://127.0.0.1:25294`
+- `cargo run -q -- send --message "🧪 clawhip live verification (...)"` exited successfully
+- guild-wide search confirmed actual Discord delivery by the `clawhip` webhook bot
+- delivery landed in `#ops` (`1477003109564678174`), confirming the configured wildcard webhook route was active
