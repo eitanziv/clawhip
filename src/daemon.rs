@@ -793,4 +793,126 @@ mod tests {
             Value::from("codex")
         );
     }
+
+    #[tokio::test]
+    async fn update_status_returns_no_pending_when_empty() {
+        let (tx, _rx) = mpsc::channel(1);
+        let state = AppState {
+            config: Arc::new(AppConfig::default()),
+            port: 25294,
+            tx,
+            tmux_registry: Arc::new(RwLock::new(HashMap::new())),
+            pending_update: update::new_shared_pending_update(),
+        };
+
+        let response = update_status(State(state)).await.into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["pending"], Value::Bool(false));
+        assert_eq!(json["current_version"], Value::String(VERSION.to_string()));
+    }
+
+    #[tokio::test]
+    async fn update_status_returns_pending_when_set() {
+        let (tx, _rx) = mpsc::channel(1);
+        let pending = update::new_shared_pending_update();
+        *pending.write().await = Some(update::PendingUpdate {
+            current_version: "0.5.4".into(),
+            latest_version: "0.6.0".into(),
+            release_url: "https://github.com/Yeachan-Heo/clawhip/releases/tag/v0.6.0".into(),
+            detected_at: "2026-04-07T00:00:00Z".into(),
+        });
+
+        let state = AppState {
+            config: Arc::new(AppConfig::default()),
+            port: 25294,
+            tx,
+            tmux_registry: Arc::new(RwLock::new(HashMap::new())),
+            pending_update: pending,
+        };
+
+        let response = update_status(State(state)).await.into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["pending"], Value::Bool(true));
+        assert_eq!(json["latest_version"], Value::from("0.6.0"));
+        assert_eq!(json["current_version"], Value::from("0.5.4"));
+    }
+
+    #[tokio::test]
+    async fn approve_returns_error_when_no_pending_update() {
+        let (tx, _rx) = mpsc::channel(1);
+        let state = AppState {
+            config: Arc::new(AppConfig::default()),
+            port: 25294,
+            tx,
+            tmux_registry: Arc::new(RwLock::new(HashMap::new())),
+            pending_update: update::new_shared_pending_update(),
+        };
+
+        let response = approve_update(State(state)).await.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ok"], Value::Bool(false));
+        assert!(
+            json["error"]
+                .as_str()
+                .unwrap()
+                .contains("no pending update")
+        );
+    }
+
+    #[tokio::test]
+    async fn dismiss_clears_pending_update() {
+        let (tx, _rx) = mpsc::channel(1);
+        let pending = update::new_shared_pending_update();
+        *pending.write().await = Some(update::PendingUpdate {
+            current_version: "0.5.4".into(),
+            latest_version: "0.6.0".into(),
+            release_url: "https://example.com".into(),
+            detected_at: "2026-04-07T00:00:00Z".into(),
+        });
+
+        let state = AppState {
+            config: Arc::new(AppConfig::default()),
+            port: 25294,
+            tx,
+            tmux_registry: Arc::new(RwLock::new(HashMap::new())),
+            pending_update: pending.clone(),
+        };
+
+        let response = dismiss_update(State(state)).await.into_response();
+        assert_eq!(response.status(), StatusCode::OK);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ok"], Value::Bool(true));
+        assert_eq!(json["dismissed_version"], Value::from("0.6.0"));
+        assert!(pending.read().await.is_none());
+    }
+
+    #[tokio::test]
+    async fn dismiss_returns_error_when_no_pending_update() {
+        let (tx, _rx) = mpsc::channel(1);
+        let state = AppState {
+            config: Arc::new(AppConfig::default()),
+            port: 25294,
+            tx,
+            tmux_registry: Arc::new(RwLock::new(HashMap::new())),
+            pending_update: update::new_shared_pending_update(),
+        };
+
+        let response = dismiss_update(State(state)).await.into_response();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+
+        let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+        let json: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["ok"], Value::Bool(false));
+    }
 }

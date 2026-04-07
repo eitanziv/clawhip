@@ -177,9 +177,9 @@ async fn real_main() -> Result<()> {
             systemd,
             skip_star_prompt,
         } => lifecycle::install(systemd, skip_star_prompt),
-        Commands::Update { command } => match command {
-            UpdateCommands::Run { restart } => lifecycle::update(restart),
-            UpdateCommands::Check => {
+        Commands::Update { command, restart } => match command {
+            None => lifecycle::update(restart),
+            Some(UpdateCommands::Check) => {
                 let http = reqwest::Client::builder()
                     .user_agent(format!("clawhip/{VERSION}"))
                     .build()?;
@@ -196,19 +196,19 @@ async fn real_main() -> Result<()> {
                 }
                 Ok(())
             }
-            UpdateCommands::Approve => {
+            Some(UpdateCommands::Approve) => {
                 let client = DaemonClient::from_config(config.as_ref());
                 let result = client.post_update_action("approve").await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
                 Ok(())
             }
-            UpdateCommands::Dismiss => {
+            Some(UpdateCommands::Dismiss) => {
                 let client = DaemonClient::from_config(config.as_ref());
                 let result = client.post_update_action("dismiss").await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);
                 Ok(())
             }
-            UpdateCommands::Status => {
+            Some(UpdateCommands::Status) => {
                 let client = DaemonClient::from_config(config.as_ref());
                 let result = client.get_update_status().await?;
                 println!("{}", serde_json::to_string_pretty(&result)?);

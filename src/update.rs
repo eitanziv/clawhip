@@ -24,6 +24,10 @@ pub struct UpdateConfig {
     pub check_interval_secs: u64,
     #[serde(default)]
     pub auto_restart: bool,
+    /// Absolute path to the clawhip git checkout used for self-update.
+    /// Required for daemon/systemd contexts where CWD is not the repo root.
+    #[serde(default)]
+    pub repo_root: Option<String>,
 }
 
 fn default_check_interval_secs() -> u64 {
@@ -32,7 +36,7 @@ fn default_check_interval_secs() -> u64 {
 
 impl UpdateConfig {
     pub fn is_empty(&self) -> bool {
-        !self.enabled && self.channel.is_none()
+        !self.enabled && self.channel.is_none() && self.repo_root.is_none()
     }
 }
 
@@ -154,13 +158,15 @@ pub async fn approve_update(
         .ok_or("no pending update to approve")?;
 
     let auto_restart = config.update.auto_restart;
+    let repo_root = config.update.repo_root.clone();
     let channel = config.update.channel.clone();
     let result_version = update.latest_version.clone();
 
-    let result =
-        tokio::task::spawn_blocking(move || crate::lifecycle::update_from_repo(auto_restart))
-            .await
-            .map_err(|error| format!("update task panicked: {error}"))?;
+    let result = tokio::task::spawn_blocking(move || {
+        crate::lifecycle::update_from_repo(repo_root.as_deref(), auto_restart)
+    })
+    .await
+    .map_err(|error| format!("update task panicked: {error}"))?;
 
     match &result {
         Ok(()) => {
