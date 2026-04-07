@@ -54,6 +54,10 @@ pub fn collect_keyword_hits(previous: &str, current: &str, keywords: &[String]) 
     let mut hits = Vec::new();
 
     for line in appended_lines(previous, current) {
+        if should_ignore_launcher_line(line) {
+            continue;
+        }
+
         let lower_line = line.to_ascii_lowercase();
         for (keyword, lower_keyword) in &normalized_keywords {
             if lower_line.contains(lower_keyword) {
@@ -69,6 +73,13 @@ pub fn collect_keyword_hits(previous: &str, current: &str, keywords: &[String]) 
     }
 
     hits
+}
+
+fn should_ignore_launcher_line(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.contains("clawhip emit agent.started")
+        || trimmed.contains("clawhip emit agent.finished")
+        || trimmed.contains("clawhip emit agent.failed")
 }
 
 fn appended_lines<'a>(previous: &'a str, current: &'a str) -> Vec<&'a str> {
@@ -148,6 +159,23 @@ mod tests {
             vec![KeywordHit {
                 keyword: "error".into(),
                 line: "error: failed".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn collect_keyword_hits_ignores_wrapper_lifecycle_emit_lines() {
+        let hits = collect_keyword_hits(
+            "boot",
+            "boot\nfunction else>     clawhip emit agent.failed --agent omx --session omx-pr-1340-review --project oh-my-codex --elapsed \"$elapsed\" --error \"exit $exit_code\" --mention '<@1465264645320474637>' || true\nerror: real failure",
+            &["error".into(), "FAILED".into()],
+        );
+
+        assert_eq!(
+            hits,
+            vec![KeywordHit {
+                keyword: "error".into(),
+                line: "error: real failure".into(),
             }]
         );
     }
