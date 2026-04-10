@@ -778,8 +778,15 @@ mod tests {
                     .send(String::from_utf8_lossy(&buf[..n]).to_string())
                     .await
                     .unwrap();
+                // connection: close prevents reqwest's default keep-alive
+                // from reusing the TCP stream. The collector calls accept()
+                // per request, so pooling the connection causes the 2nd
+                // request under load to hit a dead stream and the collector
+                // to hang on accept() forever (flake root-cause, see #194).
                 stream
-                    .write_all(b"HTTP/1.1 204 No Content\r\ncontent-length: 0\r\n\r\n")
+                    .write_all(
+                        b"HTTP/1.1 204 No Content\r\nconnection: close\r\ncontent-length: 0\r\n\r\n",
+                    )
                     .await
                     .unwrap();
             }
