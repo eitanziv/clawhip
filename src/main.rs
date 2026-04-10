@@ -16,6 +16,7 @@ mod memory;
 mod native_hooks;
 mod plugins;
 mod provenance;
+mod release_preflight;
 mod render;
 mod router;
 mod sink;
@@ -30,8 +31,8 @@ use clap::Parser;
 
 use crate::cli::{
     AgentCommands, Cli, Commands, ConfigCommand, CronCommands, ExplainArgs, GitCommands,
-    GithubCommands, HooksCommands, MemoryCommands, NativeCommands, PluginCommands, TmuxCommands,
-    UpdateCommands,
+    GithubCommands, HooksCommands, MemoryCommands, NativeCommands, PluginCommands, ReleaseCommands,
+    TmuxCommands, UpdateCommands,
 };
 use crate::client::DaemonClient;
 use crate::config::{AppConfig, SetupEdits};
@@ -333,6 +334,9 @@ async fn real_main() -> Result<()> {
         },
         Commands::Hooks { command } => match command {
             HooksCommands::Install(args) => hooks::install(args),
+        },
+        Commands::Release { command } => match command {
+            ReleaseCommands::Preflight { version, repo } => release_preflight::run(repo, version),
         },
     }
 }

@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Highlights
+
+- add `clawhip release preflight` to verify `Cargo.toml` / `Cargo.lock` / `CHANGELOG.md` stay consistent with the intended release tag before pushing (#189)
+- wire the preflight into `.github/workflows/release.yml` so an inconsistent release tag is rejected before `dist plan` and `publish-crates` run
+
+### How to use
+
+- run `clawhip release preflight` locally in the repo root before tagging — omit the version to default to the current `Cargo.toml` version, or pass an explicit tag (`clawhip release preflight v0.6.5`, `clawhip release preflight refs/tags/v0.6.5`)
+- the same command runs in CI via the new `preflight` job gating the release workflow
+
 ## 0.6.4 - 2026-04-10
 
 ### Breaking

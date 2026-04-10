@@ -142,6 +142,11 @@ pub enum Commands {
     /// Shows which routes match, which filters pass/fail, and where the
     /// event would be delivered — useful for debugging config.
     Explain(ExplainArgs),
+    /// Release consistency checks.
+    Release {
+        #[command(subcommand)]
+        command: ReleaseCommands,
+    },
 }
 
 #[derive(Debug, Clone, Args)]
@@ -421,6 +426,21 @@ impl NativeHookArgs {
         }
         Ok(serde_json::from_str(trimmed)?)
     }
+}
+
+#[derive(Debug, Clone, Subcommand)]
+pub enum ReleaseCommands {
+    /// Verify version/Cargo.lock/CHANGELOG consistency before tagging a release.
+    ///
+    /// If <VERSION> is omitted the current Cargo.toml version is used.
+    /// Exits non-zero when any check fails.
+    Preflight {
+        /// Expected release version (e.g. 0.6.5, v0.6.5, refs/tags/v0.6.5).
+        version: Option<String>,
+        /// Path to the repository root. Defaults to the current directory.
+        #[arg(long)]
+        repo: Option<std::path::PathBuf>,
+    },
 }
 
 #[derive(Debug, Clone, Subcommand)]
