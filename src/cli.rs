@@ -530,6 +530,11 @@ pub struct TmuxNewArgs {
     pub format: Option<TmuxWrapperFormat>,
     #[arg(long, default_value_t = false)]
     pub attach: bool,
+    /// Keep the wrapper process alive to monitor the session in-process
+    /// (tighter 1 s polling). Without this flag the wrapper exits after
+    /// successful launch and the daemon takes over monitoring.
+    #[arg(long, default_value_t = false)]
+    pub follow: bool,
     #[arg(long, default_value_t = true, action = ArgAction::Set)]
     pub retry_enter: bool,
     #[arg(long, default_value_t = DEFAULT_RETRY_ENTER_COUNT)]
@@ -1063,6 +1068,47 @@ mod tests {
         assert_eq!(args.retry_enter_count, 6);
         assert_eq!(args.retry_enter_delay_ms, 400);
         assert_eq!(args.command, vec!["codex"]);
+    }
+
+    #[test]
+    fn tmux_new_defaults_to_non_follow_mode_for_194() {
+        // Regression for #194: the default launcher path MUST return control
+        // to the caller after the session is created. If `follow` defaulted
+        // back to true, `clawhip tmux new` would once again block for the
+        // session lifetime and expose callers to false-negative SIGKILL.
+        let cli = Cli::parse_from(["clawhip", "tmux", "new", "-s", "issue-194", "--", "codex"]);
+
+        let Commands::Tmux { command } = cli.command.expect("tmux command") else {
+            panic!("expected tmux command");
+        };
+        let TmuxCommands::New(args) = command else {
+            panic!("expected tmux new command");
+        };
+
+        assert!(!args.follow, "follow must default to false after #194");
+    }
+
+    #[test]
+    fn parses_tmux_new_with_explicit_follow_flag() {
+        let cli = Cli::parse_from([
+            "clawhip",
+            "tmux",
+            "new",
+            "-s",
+            "issue-194",
+            "--follow",
+            "--",
+            "codex",
+        ]);
+
+        let Commands::Tmux { command } = cli.command.expect("tmux command") else {
+            panic!("expected tmux command");
+        };
+        let TmuxCommands::New(args) = command else {
+            panic!("expected tmux new command");
+        };
+
+        assert!(args.follow);
     }
 
     #[test]
