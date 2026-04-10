@@ -442,6 +442,35 @@ const CONFIG_EDITOR_MENU: [&str; 8] = [
 ];
 
 const DISCORD_TOKEN_ENV_VARS: [&str; 2] = ["DISCORD_TOKEN", "CLAWHIP_DISCORD_BOT_TOKEN"];
+pub const CONFIG_EDITOR_MENU_ITEMS: [&str; 8] = [
+    "Set Discord bot token",
+    "Set daemon base URL",
+    "Set default channel",
+    "Set default format",
+    "Set Discord webhook quickstart route",
+    "Save and exit",
+    "Exit without saving",
+    "Print manual config template hint",
+];
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SetupEdits {
+    pub webhook: Option<String>,
+    pub bot_token: Option<String>,
+    pub default_channel: Option<String>,
+    pub default_format: Option<MessageFormat>,
+    pub daemon_base_url: Option<String>,
+}
+
+impl SetupEdits {
+    pub fn is_empty(&self) -> bool {
+        self.webhook.is_none()
+            && self.bot_token.is_none()
+            && self.default_channel.is_none()
+            && self.default_format.is_none()
+            && self.daemon_base_url.is_none()
+    }
+}
 
 fn merge_legacy_discord_field(
     field: &str,
@@ -705,68 +734,86 @@ impl AppConfig {
         Ok(())
     }
 
-    pub fn scaffold_webhook_quickstart(&mut self, webhook: String) {
-        let webhook = normalize_text(Some(webhook));
-        if webhook.is_none() {
-            return Ok(());
+    pub fn apply_setup_edits(&mut self, edits: SetupEdits) -> Result<()> {
+        let SetupEdits {
+            webhook,
+            bot_token,
+            default_channel,
+            default_format,
+            daemon_base_url,
+        } = edits;
+
+        let webhook = normalize_text(webhook);
+        let bot_token = normalize_secret(bot_token);
+        let default_channel = normalize_text(default_channel);
+        let daemon_base_url = normalize_text(daemon_base_url);
+
+        if webhook.is_none()
+            && bot_token.is_none()
+            && default_channel.is_none()
+            && daemon_base_url.is_none()
+            && default_format.is_none()
+        {
+            return Err("setup requires at least one non-empty setup flag".into());
         }
+
+        if let Some(webhook) = webhook {
+            self.scaffold_webhook_quickstart(webhook)?;
+        }
+        if let Some(bot_token) = bot_token {
+            self.providers.discord.bot_token = Some(bot_token);
+        }
+        if let Some(default_channel) = default_channel {
+            self.defaults.channel = Some(default_channel);
+        }
+        if let Some(default_format) = default_format {
+            self.defaults.format = default_format;
+        }
+        if let Some(daemon_base_url) = daemon_base_url {
+            self.daemon.base_url = daemon_base_url;
+        }
+
+        Ok(())
+    }
+
+    pub fn scaffold_webhook_quickstart(&mut self, webhook: String) -> Result<()> {
+        let webhook = normalize_text(Some(webhook)).ok_or_else(|| {
+            "setup requires a non-empty webhook URL when --webhook is supplied".to_string()
+        })?;
 
         let matches = self
             .routes
             .iter()
             .enumerate()
-            .filter_map(|(index, route)| is_canonical_quickstart_route(route).then_some(index))
+            .filter(|(_, route)| is_canonical_quickstart_route(route))
+            .map(|(index, _)| index)
             .collect::<Vec<_>>();
 
-        if matches.len() > 1 {
-            return Err(
-                "multiple canonical quickstart routes found; clean up routes manually before updating the quickstart webhook"
+        match matches.as_slice() {
+            [] => {
+                self.routes.push(RouteRule {
+                    event: "*".to_string(),
+                    filter: BTreeMap::new(),
+                    sink: default_sink_name(),
+                    channel: None,
+                    webhook: Some(webhook),
+                    slack_webhook: None,
+                    mention: None,
+                    allow_dynamic_tokens: false,
+                    format: None,
+                    template: None,
+                });
+                Ok(())
+            }
+            [index] => {
+                self.routes[*index].webhook = Some(webhook);
+                Ok(())
+            }
+            _ => Err(
+                "multiple canonical quickstart routes found; clean up manual config before updating the webhook quickstart route"
                     .into(),
-            );
+            ),
         }
-
-        if let Some(index) = matches.first().copied() {
-            self.routes[index].webhook = webhook;
-            return Ok(());
-        }
-
-        self.routes.push(RouteRule {
-            event: "*".to_string(),
-            filter: BTreeMap::new(),
-            sink: default_sink_name(),
-            channel: None,
-            webhook,
-            slack_webhook: None,
-            mention: None,
-            allow_dynamic_tokens: false,
-            format: None,
-            template: None,
-        });
-        Ok(())
-    }
-
-    pub fn set_discord_bot_token(&mut self, bot_token: String) {
-        self.providers.discord.bot_token = normalize_secret(Some(bot_token));
-    }
-
-    pub fn set_default_channel(&mut self, channel: String) {
-        self.defaults.channel = normalize_text(Some(channel));
-    }
-
-    pub fn set_default_format(&mut self, format: MessageFormat) {
-        self.defaults.format = format;
-    }
-
-    pub fn set_daemon_base_url(&mut self, base_url: String) {
-        self.daemon.base_url =
-            normalize_text(Some(base_url)).unwrap_or_else(default_base_url);
-    }
-
-    fn canonical_quickstart_webhook(&self) -> Option<&str> {
-        self.routes
-            .iter()
-            .find(|route| is_canonical_quickstart_route(route))
-            .and_then(|route| route.webhook.as_deref())
     }
 
     pub fn daemon_base_url(&self) -> String {
@@ -790,8 +837,8 @@ impl AppConfig {
         loop {
             self.print_summary();
             println!("Choose an action:");
-            for line in CONFIG_EDITOR_MENU {
-                println!("  {line}");
+            for (index, item) in CONFIG_EDITOR_MENU_ITEMS.iter().enumerate() {
+                println!("  {}) {}", index + 1, item);
             }
             match prompt("Selection")?.trim() {
                 "1" => self.set_discord_bot_token(prompt("Bot token")?),
@@ -801,15 +848,12 @@ impl AppConfig {
                         Some(&self.daemon.base_url),
                     )?)
                 }
-                "3" => self.set_default_channel(prompt("Default channel")?),
-                "4" => self.set_default_format(prompt_format(Some(self.defaults.format.clone()))?),
-                "5" => {
-                    let webhook = prompt_with_default(
-                        "Discord webhook quickstart route",
-                        self.canonical_quickstart_webhook(),
-                    )?;
-                    self.scaffold_webhook_quickstart(webhook)?;
-                }
+                "3" => self.defaults.channel = empty_to_none(prompt("Default channel")?),
+                "4" => self.defaults.format = prompt_format(Some(self.defaults.format.clone()))?,
+                "5" => match self.scaffold_webhook_quickstart(prompt("Webhook URL")?) {
+                    Ok(()) => {}
+                    Err(error) => println!("{error}"),
+                },
                 "6" => {
                     self.save(path)?;
                     println!("Saved {}", path.display());
