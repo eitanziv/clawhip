@@ -43,11 +43,11 @@ pub enum Commands {
     },
     /// Check daemon health/status.
     Status,
-    /// Scaffold a quick-start configuration.
-    Setup {
-        #[arg(long)]
-        webhook: String,
-    },
+    #[command(
+        about = "Scaffold common setup presets without editing advanced routes or monitors",
+        long_about = "Scaffold the bounded quickstart preset catalog.\n\nAdvanced routes and monitors still require manual config editing or the bounded clawhip config editor."
+    )]
+    Setup(SetupArgs),
     /// Send a custom event to the local daemon.
     Send {
         #[arg(long)]
@@ -157,6 +157,26 @@ pub struct EmitArgs {
     pub event_type: String,
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub fields: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, Args)]
+#[command(arg_required_else_help = true)]
+pub struct SetupArgs {
+    /// Set or update the canonical Discord webhook quickstart route.
+    #[arg(long)]
+    pub webhook: Option<String>,
+    /// Set the Discord bot token in [providers.discord].
+    #[arg(long = "bot-token")]
+    pub bot_token: Option<String>,
+    /// Set the default Discord channel in [defaults].
+    #[arg(long = "default-channel")]
+    pub default_channel: Option<String>,
+    /// Set the default message format in [defaults].
+    #[arg(long = "default-format")]
+    pub default_format: Option<MessageFormat>,
+    /// Set the daemon base URL in [daemon].
+    #[arg(long = "daemon-base-url")]
+    pub daemon_base_url: Option<String>,
 }
 
 impl EmitArgs {
@@ -587,9 +607,12 @@ pub struct HooksInstallArgs {
 
 #[derive(Debug, Clone, Default, Subcommand)]
 pub enum ConfigCommand {
+    /// Edit the five common setup presets interactively; advanced routes and monitors remain manual-edit territory.
     #[default]
     Interactive,
+    /// Print the current config file.
     Show,
+    /// Print the active config file path.
     Path,
 }
 
@@ -597,6 +620,8 @@ pub enum ConfigCommand {
 mod tests {
     use super::*;
     use crate::event::compat::from_incoming_event;
+    use clap::CommandFactory;
+    use clap::error::ErrorKind;
 
     #[test]
     fn parses_emit_subcommand_with_top_level_fields() {
@@ -856,11 +881,78 @@ mod tests {
             "https://discord.com/api/webhooks/123/abc",
         ]);
 
-        let Commands::Setup { webhook } = cli.command.expect("setup command") else {
+        let Commands::Setup(args) = cli.command.expect("setup command") else {
             panic!("expected setup command");
         };
 
-        assert_eq!(webhook, "https://discord.com/api/webhooks/123/abc");
+        assert_eq!(
+            args.webhook.as_deref(),
+            Some("https://discord.com/api/webhooks/123/abc")
+        );
+        assert!(args.bot_token.is_none());
+    }
+
+    #[test]
+    fn parses_setup_mixed_flag_subcommand() {
+        let cli = Cli::parse_from([
+            "clawhip",
+            "setup",
+            "--webhook",
+            "https://discord.com/api/webhooks/123/abc",
+            "--bot-token",
+            "discord-token",
+            "--default-channel",
+            "alerts",
+            "--default-format",
+            "alert",
+            "--daemon-base-url",
+            "http://127.0.0.1:31337",
+        ]);
+
+        let Commands::Setup(args) = cli.command.expect("setup command") else {
+            panic!("expected setup command");
+        };
+
+        assert_eq!(
+            args.webhook.as_deref(),
+            Some("https://discord.com/api/webhooks/123/abc")
+        );
+        assert_eq!(args.bot_token.as_deref(), Some("discord-token"));
+        assert_eq!(args.default_channel.as_deref(), Some("alerts"));
+        assert_eq!(args.default_format, Some(MessageFormat::Alert));
+        assert_eq!(
+            args.daemon_base_url.as_deref(),
+            Some("http://127.0.0.1:31337")
+        );
+    }
+
+    #[test]
+    fn setup_without_flags_fails_with_help() {
+        let error = Cli::try_parse_from(["clawhip", "setup"]).expect_err("setup should fail");
+        assert_eq!(
+            error.kind(),
+            ErrorKind::DisplayHelpOnMissingArgumentOrSubcommand
+        );
+
+        let rendered = error.to_string();
+        assert!(rendered.contains("Usage: clawhip setup [OPTIONS]"));
+        assert!(rendered.contains("--webhook"));
+        assert!(rendered.contains("--bot-token"));
+    }
+
+    #[test]
+    fn setup_help_mentions_manual_advanced_editing() {
+        let mut command = Cli::command();
+        let setup = command
+            .find_subcommand_mut("setup")
+            .expect("setup subcommand");
+        let mut buffer = Vec::new();
+        setup.write_long_help(&mut buffer).expect("write help");
+        let help = String::from_utf8(buffer).expect("utf8");
+
+        assert!(help.contains("Advanced routes and monitors still require manual config editing"));
+        assert!(help.contains("--default-format <DEFAULT_FORMAT>"));
+        assert!(help.contains("--daemon-base-url <DAEMON_BASE_URL>"));
     }
 
     #[test]

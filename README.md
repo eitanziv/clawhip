@@ -276,6 +276,25 @@ Quick start:
 clawhip setup --webhook "https://discord.com/api/webhooks/..."
 ```
 
+Bounded setup presets also support:
+
+```bash
+clawhip setup \
+  --bot-token "discord-bot-token" \
+  --default-channel "1234567890" \
+  --default-format alert \
+  --daemon-base-url "http://127.0.0.1:25294"
+```
+
+`clawhip setup` stays non-interactive and intentionally limited to five presets only:
+- Discord webhook quickstart route
+- Discord bot token
+- Default channel
+- Default message format
+- Daemon base URL
+
+Advanced routes and monitor definitions are still edited manually in the config file or revisited through the bounded `clawhip config` editor surface.
+
 Route example:
 
 ```toml
@@ -790,7 +809,7 @@ Required live sign-off presets:
 ```bash
 clawhip                 # start daemon
 clawhip status          # daemon health
-clawhip config          # config management
+clawhip config          # bounded preset editor / config inspection
 clawhip send ...        # thin client custom event
 clawhip github ...      # thin client GitHub event
 clawhip git ...         # thin client git event

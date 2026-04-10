@@ -32,7 +32,7 @@ use crate::cli::{
     HooksCommands, MemoryCommands, NativeCommands, PluginCommands, TmuxCommands, UpdateCommands,
 };
 use crate::client::DaemonClient;
-use crate::config::AppConfig;
+use crate::config::{AppConfig, SetupEdits};
 use crate::event::compat::from_incoming_event;
 use crate::events::IncomingEvent;
 
@@ -74,9 +74,15 @@ async fn real_main() -> Result<()> {
             let client = DaemonClient::from_config(config.as_ref());
             send_incoming_event(&client, args.into_event()?).await
         }
-        Commands::Setup { webhook } => {
+        Commands::Setup(args) => {
             let mut editable = AppConfig::load_or_default(&config_path)?;
-            editable.scaffold_webhook_quickstart(webhook);
+            editable.apply_setup_edits(SetupEdits {
+                webhook: args.webhook,
+                bot_token: args.bot_token,
+                default_channel: args.default_channel,
+                default_format: args.default_format,
+                daemon_base_url: args.daemon_base_url,
+            })?;
             editable.validate()?;
             editable.save(&config_path)?;
             println!("Saved {}", config_path.display());
