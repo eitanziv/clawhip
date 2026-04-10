@@ -983,6 +983,7 @@ PR created #7",
         let monitor = TmuxSessionMonitor {
             session: "issue-*".into(),
             channel: Some("alerts".into()),
+            channel_name: None,
             mention: None,
             keywords: vec!["panic".into()],
             keyword_window_secs: 30,

@@ -1,3 +1,4 @@
+mod binding_verify;
 mod cli;
 mod client;
 mod config;
@@ -32,10 +33,11 @@ use clap::Parser;
 use crate::cli::{
     AgentCommands, Cli, Commands, ConfigCommand, CronCommands, ExplainArgs, GitCommands,
     GithubCommands, HooksCommands, MemoryCommands, NativeCommands, PluginCommands, ReleaseCommands,
-    TmuxCommands, UpdateCommands,
+    SetupArgs, TmuxCommands, UpdateCommands, VerifyBindingsArgs,
 };
 use crate::client::DaemonClient;
 use crate::config::{AppConfig, SetupEdits};
+use crate::discord::DiscordClient;
 use crate::event::compat::from_incoming_event;
 use crate::events::IncomingEvent;
 
@@ -78,20 +80,7 @@ async fn real_main() -> Result<()> {
             send_incoming_event(&client, args.into_event()?).await
         }
         Commands::Explain(args) => run_explain(config.as_ref(), args),
-        Commands::Setup(args) => {
-            let mut editable = AppConfig::load_or_default(&config_path)?;
-            editable.apply_setup_edits(SetupEdits {
-                webhook: args.webhook,
-                bot_token: args.bot_token,
-                default_channel: args.default_channel,
-                default_format: args.default_format,
-                daemon_base_url: args.daemon_base_url,
-            })?;
-            editable.validate()?;
-            editable.save(&config_path)?;
-            println!("Saved {}", config_path.display());
-            Ok(())
-        }
+        Commands::Setup(args) => run_setup(args, &config_path).await,
         Commands::Send { channel, message } => {
             let client = DaemonClient::from_config(config.as_ref());
             send_incoming_event(&client, IncomingEvent::custom(channel, message)).await
@@ -305,6 +294,7 @@ async fn real_main() -> Result<()> {
                 println!("{}", config_path.display());
                 Ok(())
             }
+            ConfigCommand::VerifyBindings(args) => run_verify_bindings(config, args).await,
         },
         Commands::Plugin { command } => match command {
             PluginCommands::List => {
@@ -344,6 +334,157 @@ async fn real_main() -> Result<()> {
 async fn send_incoming_event(client: &DaemonClient, event: IncomingEvent) -> Result<()> {
     let event = prepare_event(event)?;
     client.send_event(&event).await
+}
+
+/// Parse `--expect-name REPO=NAME` entries into a `repo -> name` map.
+///
+/// **Hard-fails** on any malformed entry instead of silently skipping it, so
+/// a typo like `--expect-name clawhip` (missing `=`) cannot bypass the
+/// name-match guard during `setup --bind`. This is a correctness guarantee:
+/// when the operator asks us to enforce a name, we must either enforce it or
+/// refuse the command — never quietly drop the assertion.
+///
+/// Rejects:
+/// - entries without `=` (`"clawhip"`)
+/// - empty repo (`"=dev"` or `"   =dev"`)
+/// - empty name (`"clawhip="` or `"clawhip=   "`)
+/// - duplicate repo keys (prevents ambiguous overrides)
+fn parse_expect_name_overrides(
+    entries: &[String],
+) -> Result<std::collections::HashMap<String, String>> {
+    let mut map = std::collections::HashMap::new();
+    for entry in entries {
+        let (repo, name) = entry
+            .split_once('=')
+            .ok_or_else(|| format!("--expect-name must be REPO=NAME, got '{entry}'"))?;
+        let repo = repo.trim();
+        let name = name.trim();
+        if repo.is_empty() {
+            return Err(format!("--expect-name '{entry}' has an empty repo name").into());
+        }
+        if name.is_empty() {
+            return Err(format!("--expect-name '{entry}' has an empty channel name").into());
+        }
+        if map.insert(repo.to_string(), name.to_string()).is_some() {
+            return Err(format!("--expect-name has duplicate entries for repo '{repo}'").into());
+        }
+    }
+    Ok(map)
+}
+
+async fn run_setup(args: SetupArgs, config_path: &std::path::Path) -> Result<()> {
+    let mut editable = AppConfig::load_or_default(config_path)?;
+
+    let standard_edits = SetupEdits {
+        webhook: args.webhook,
+        bot_token: args.bot_token,
+        default_channel: args.default_channel,
+        default_format: args.default_format,
+        daemon_base_url: args.daemon_base_url,
+    };
+
+    // Must have at least one meaningful action.
+    if standard_edits.is_empty() && args.bind.is_empty() && !args.verify_bindings {
+        return Err("setup requires at least one non-empty setup flag".into());
+    }
+
+    // Apply standard setup edits first (only if any are set).
+    if !standard_edits.is_empty() {
+        editable.apply_setup_edits(standard_edits)?;
+    }
+
+    // Process --bind entries: resolve each channel against Discord and write a
+    // repo binding route with a channel_name hint.
+    if !args.bind.is_empty() {
+        let client = DiscordClient::from_config(Arc::new(editable.clone()))?;
+
+        // Collect expected-name overrides (repo -> name). Hard-fails on
+        // malformed input so a typo like `--expect-name clawhip` cannot
+        // silently bypass the name-match guard.
+        let expect_map = parse_expect_name_overrides(&args.expect_name)?;
+
+        for entry in &args.bind {
+            let (repo, channel_id) = entry
+                .split_once('=')
+                .ok_or_else(|| format!("--bind must be REPO=CHANNEL_ID, got '{entry}'"))?;
+            let repo = repo.trim();
+            let channel_id = channel_id.trim();
+
+            let lookup = client.lookup_channel(channel_id).await;
+            match &lookup {
+                binding_verify::ChannelLookup::Found { name, .. } => {
+                    let live_name = name.as_deref().unwrap_or("<unnamed>");
+
+                    // Check expected-name override.
+                    if let Some(expected) = expect_map.get(repo) {
+                        let expected_clean = expected.trim().trim_start_matches('#');
+                        if !live_name.eq_ignore_ascii_case(expected_clean) {
+                            return Err(format!(
+                                "bind {repo}: channel {channel_id} live name is #{live_name} but --expect-name requires #{expected_clean}"
+                            ).into());
+                        }
+                    }
+
+                    println!("bind: {repo} -> {channel_id} (#{live_name})");
+                    editable.apply_repo_binding(repo, channel_id, name.as_deref())?;
+                }
+                binding_verify::ChannelLookup::NotFound => {
+                    return Err(
+                        format!("bind {repo}: channel {channel_id} not found on Discord").into(),
+                    );
+                }
+                binding_verify::ChannelLookup::Forbidden => {
+                    return Err(format!(
+                        "bind {repo}: bot cannot access channel {channel_id} (403 Forbidden)"
+                    )
+                    .into());
+                }
+                binding_verify::ChannelLookup::Unauthorized => {
+                    return Err("bind: Discord bot token is invalid (401 Unauthorized)".into());
+                }
+                binding_verify::ChannelLookup::NoToken => {
+                    return Err(
+                        "bind: --bind requires a Discord bot token; configure [providers.discord].token first".into()
+                    );
+                }
+                binding_verify::ChannelLookup::Transport(msg) => {
+                    return Err(format!("bind {repo}: {msg}").into());
+                }
+            }
+        }
+    }
+
+    editable.validate()?;
+
+    // Optional full binding audit before saving.
+    if args.verify_bindings {
+        let client = DiscordClient::from_config(Arc::new(editable.clone()))?;
+        let audit = binding_verify::verify(&client, &editable).await;
+        print!("{audit}");
+        if !audit.all_ok() {
+            return Err("setup aborted: binding verification failed (see above)".into());
+        }
+    }
+
+    editable.save(config_path)?;
+    println!("Saved {}", config_path.display());
+    Ok(())
+}
+
+async fn run_verify_bindings(config: Arc<AppConfig>, args: VerifyBindingsArgs) -> Result<()> {
+    let client = DiscordClient::from_config(config.clone())?;
+    let audit = binding_verify::verify(&client, &config).await;
+
+    if args.json {
+        println!("{}", serde_json::to_string_pretty(&audit)?);
+    } else {
+        print!("{audit}");
+    }
+
+    if !audit.all_ok() {
+        std::process::exit(1);
+    }
+    Ok(())
 }
 
 fn run_explain(config: &AppConfig, args: ExplainArgs) -> Result<()> {
@@ -409,9 +550,92 @@ fn format_tmux_list(registrations: &[crate::source::RegisteredTmuxSession]) -> S
 
 #[cfg(test)]
 mod tests {
-    use super::format_tmux_list;
+    use super::{format_tmux_list, parse_expect_name_overrides};
     use crate::events::RoutingMetadata;
     use crate::source::tmux::{ParentProcessInfo, RegisteredTmuxSession, RegistrationSource};
+
+    #[test]
+    fn parse_expect_name_overrides_accepts_well_formed_entries() {
+        let entries = vec![
+            "clawhip=clawhip-dev".to_string(),
+            "oh-my-codex=omx-dev".to_string(),
+        ];
+        let map = parse_expect_name_overrides(&entries).expect("valid entries");
+        assert_eq!(map.get("clawhip").map(String::as_str), Some("clawhip-dev"));
+        assert_eq!(map.get("oh-my-codex").map(String::as_str), Some("omx-dev"));
+    }
+
+    #[test]
+    fn parse_expect_name_overrides_trims_whitespace() {
+        let entries = vec!["  clawhip  =  clawhip-dev  ".to_string()];
+        let map = parse_expect_name_overrides(&entries).expect("trimmed entries");
+        assert_eq!(map.get("clawhip").map(String::as_str), Some("clawhip-dev"));
+    }
+
+    #[test]
+    fn parse_expect_name_overrides_rejects_missing_equals() {
+        // Regression for #198 review: previously filter_map silently dropped
+        // malformed entries, so `--expect-name clawhip` bypassed the guard.
+        let entries = vec!["clawhip".to_string()];
+        let error = parse_expect_name_overrides(&entries).expect_err("missing = must hard-fail");
+        let msg = error.to_string();
+        assert!(
+            msg.contains("--expect-name must be REPO=NAME"),
+            "unexpected error: {msg}"
+        );
+        assert!(msg.contains("'clawhip'"), "error should quote entry: {msg}");
+    }
+
+    #[test]
+    fn parse_expect_name_overrides_rejects_empty_repo() {
+        let entries = vec!["=clawhip-dev".to_string()];
+        let error = parse_expect_name_overrides(&entries).expect_err("empty repo must hard-fail");
+        assert!(error.to_string().contains("empty repo name"));
+    }
+
+    #[test]
+    fn parse_expect_name_overrides_rejects_whitespace_only_repo() {
+        let entries = vec!["   =clawhip-dev".to_string()];
+        let error =
+            parse_expect_name_overrides(&entries).expect_err("whitespace repo must hard-fail");
+        assert!(error.to_string().contains("empty repo name"));
+    }
+
+    #[test]
+    fn parse_expect_name_overrides_rejects_empty_name() {
+        let entries = vec!["clawhip=".to_string()];
+        let error = parse_expect_name_overrides(&entries).expect_err("empty name must hard-fail");
+        assert!(error.to_string().contains("empty channel name"));
+    }
+
+    #[test]
+    fn parse_expect_name_overrides_rejects_whitespace_only_name() {
+        let entries = vec!["clawhip=   ".to_string()];
+        let error =
+            parse_expect_name_overrides(&entries).expect_err("whitespace name must hard-fail");
+        assert!(error.to_string().contains("empty channel name"));
+    }
+
+    #[test]
+    fn parse_expect_name_overrides_rejects_duplicate_repo() {
+        let entries = vec![
+            "clawhip=clawhip-dev".to_string(),
+            "clawhip=omc-dev".to_string(),
+        ];
+        let error =
+            parse_expect_name_overrides(&entries).expect_err("duplicate repo must hard-fail");
+        assert!(
+            error
+                .to_string()
+                .contains("duplicate entries for repo 'clawhip'")
+        );
+    }
+
+    #[test]
+    fn parse_expect_name_overrides_accepts_empty_input() {
+        let map = parse_expect_name_overrides(&[]).expect("empty input is fine");
+        assert!(map.is_empty());
+    }
 
     #[test]
     fn format_tmux_list_renders_metadata_columns() {

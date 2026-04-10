@@ -213,6 +213,29 @@ pub struct SetupArgs {
     /// Set the daemon base URL in [daemon].
     #[arg(long = "daemon-base-url")]
     pub daemon_base_url: Option<String>,
+    /// Bind a repo to a Discord channel ID. Format: `repo=channel_id`.
+    ///
+    /// Resolves the channel ID against the live Discord API, surfaces the
+    /// live channel name, writes the resulting route with a `channel_name`
+    /// hint for drift detection, and refuses if the channel can't be
+    /// resolved (missing, forbidden, or no bot token). Repeatable.
+    #[arg(long = "bind", value_name = "REPO=CHANNEL_ID")]
+    pub bind: Vec<String>,
+    /// When combined with `--bind`, refuse unless the live channel name
+    /// matches the expected name. Format: `repo=expected_name`. Repeatable.
+    #[arg(long = "expect-name", value_name = "REPO=NAME")]
+    pub expect_name: Vec<String>,
+    /// Verify all resulting channel bindings against live Discord state
+    /// before writing the config. Fails the command if any binding drifts.
+    #[arg(long = "verify-bindings", default_value_t = false)]
+    pub verify_bindings: bool,
+}
+
+#[derive(Debug, Clone, Default, Args)]
+pub struct VerifyBindingsArgs {
+    /// Emit machine-readable JSON instead of the human-readable text report.
+    #[arg(long, default_value_t = false)]
+    pub json: bool,
 }
 
 impl EmitArgs {
@@ -670,6 +693,12 @@ pub enum ConfigCommand {
     Show,
     /// Print the active config file path.
     Path,
+    /// Verify all channel bindings in the config against live Discord server state.
+    ///
+    /// Walks routes, defaults, and monitors to collect every channel ID reference,
+    /// then queries the Discord API to confirm each channel exists and (optionally)
+    /// matches the `channel_name` hint set alongside the ID.
+    VerifyBindings(VerifyBindingsArgs),
 }
 
 #[cfg(test)]
@@ -926,6 +955,52 @@ mod tests {
         };
 
         assert!(matches!(command, TmuxCommands::List));
+    }
+
+    #[test]
+    fn parses_setup_bind_subcommand() {
+        let cli = Cli::parse_from([
+            "clawhip",
+            "setup",
+            "--bind",
+            "clawhip=1480171113253175356",
+            "--bind",
+            "oh-my-codex=1480171106324189335",
+            "--expect-name",
+            "clawhip=clawhip-dev",
+        ]);
+        let Commands::Setup(args) = cli.command.expect("setup command") else {
+            panic!("expected Setup");
+        };
+        assert_eq!(args.bind.len(), 2);
+        assert_eq!(args.bind[0], "clawhip=1480171113253175356");
+        assert_eq!(args.bind[1], "oh-my-codex=1480171106324189335");
+        assert_eq!(args.expect_name.len(), 1);
+        assert_eq!(args.expect_name[0], "clawhip=clawhip-dev");
+    }
+
+    #[test]
+    fn parses_config_verify_bindings_subcommand() {
+        let cli = Cli::parse_from(["clawhip", "config", "verify-bindings", "--json"]);
+        let Some(Commands::Config { command }) = cli.command else {
+            panic!("expected Config");
+        };
+        let Some(ConfigCommand::VerifyBindings(args)) = command else {
+            panic!("expected VerifyBindings");
+        };
+        assert!(args.json);
+    }
+
+    #[test]
+    fn parses_config_verify_bindings_text_default() {
+        let cli = Cli::parse_from(["clawhip", "config", "verify-bindings"]);
+        let Some(Commands::Config {
+            command: Some(ConfigCommand::VerifyBindings(args)),
+        }) = cli.command
+        else {
+            panic!("expected verify-bindings");
+        };
+        assert!(!args.json);
     }
 
     #[test]

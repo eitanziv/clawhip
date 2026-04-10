@@ -861,6 +861,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("fallback".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -870,6 +871,7 @@ mod tests {
                     .into_iter()
                     .collect(),
                 channel: Some("route-channel".into()),
+                channel_name: None,
                 webhook: None,
                 slack_webhook: None,
                 mention: Some("<@1465264645320474637>".into()),

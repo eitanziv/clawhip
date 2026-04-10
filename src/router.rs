@@ -564,6 +564,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![
@@ -572,6 +573,7 @@ mod tests {
                     sink: "discord".into(),
                     filter: Default::default(),
                     channel: Some("ops".into()),
+                    channel_name: None,
                     webhook: None,
                     slack_webhook: None,
                     mention: Some("@ops".into()),
@@ -584,6 +586,7 @@ mod tests {
                     sink: "discord".into(),
                     filter: Default::default(),
                     channel: Some("eng".into()),
+                    channel_name: None,
                     webhook: None,
                     slack_webhook: None,
                     mention: Some("@eng".into()),
@@ -629,6 +632,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("fallback".into()),
+                channel_name: None,
                 format: MessageFormat::Alert,
             },
             routes: vec![RouteRule {
@@ -636,6 +640,7 @@ mod tests {
                 sink: "discord".into(),
                 filter: Default::default(),
                 channel: Some("github".into()),
+                channel_name: None,
                 webhook: None,
                 slack_webhook: None,
                 mention: None,
@@ -697,6 +702,7 @@ mod tests {
                     sink: "discord".into(),
                     filter: Default::default(),
                     channel: None,
+                    channel_name: None,
                     webhook: Some(failing_webhook),
                     slack_webhook: None,
                     mention: None,
@@ -709,6 +715,7 @@ mod tests {
                     sink: "discord".into(),
                     filter: Default::default(),
                     channel: None,
+                    channel_name: None,
                     webhook: Some(successful_webhook),
                     slack_webhook: None,
                     mention: None,
@@ -743,6 +750,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -752,6 +760,7 @@ mod tests {
                     .into_iter()
                     .collect(),
                 channel: Some("route".into()),
+                channel_name: None,
                 webhook: None,
                 slack_webhook: None,
                 mention: None,
@@ -779,6 +788,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -788,6 +798,7 @@ mod tests {
                     .into_iter()
                     .collect(),
                 channel: Some("worktrees".into()),
+                channel_name: None,
                 webhook: None,
                 slack_webhook: None,
                 mention: None,
@@ -824,6 +835,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -831,6 +843,7 @@ mod tests {
                 sink: "discord".into(),
                 filter: Default::default(),
                 channel: Some("route".into()),
+                channel_name: None,
                 webhook: None,
                 slack_webhook: None,
                 mention: Some("<@1465264645320474637>".into()),
@@ -852,6 +865,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![
@@ -862,6 +876,7 @@ mod tests {
                         .into_iter()
                         .collect(),
                     channel: Some("gh-route".into()),
+                    channel_name: None,
                     webhook: None,
                     slack_webhook: None,
                     mention: Some("<@botid>".into()),
@@ -876,6 +891,7 @@ mod tests {
                         .into_iter()
                         .collect(),
                     channel: Some("tmux-route".into()),
+                    channel_name: None,
                     webhook: None,
                     slack_webhook: None,
                     mention: Some("<@botid>".into()),
@@ -906,6 +922,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -913,6 +930,7 @@ mod tests {
                 sink: "discord".into(),
                 filter: Default::default(),
                 channel: Some("dynamic-route".into()),
+                channel_name: None,
                 webhook: None,
                 slack_webhook: None,
                 mention: None,
@@ -933,6 +951,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -940,6 +959,7 @@ mod tests {
                 sink: "discord".into(),
                 filter: Default::default(),
                 channel: Some("dynamic-route".into()),
+                channel_name: None,
                 webhook: None,
                 slack_webhook: None,
                 mention: None,
@@ -960,6 +980,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -969,6 +990,7 @@ mod tests {
                     .into_iter()
                     .collect(),
                 channel: Some("tmux-route".into()),
+                channel_name: None,
                 webhook: None,
                 slack_webhook: None,
                 mention: None,
@@ -995,6 +1017,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -1002,6 +1025,7 @@ mod tests {
                 sink: "discord".into(),
                 filter: Default::default(),
                 channel: Some("tmux-route".into()),
+                channel_name: None,
                 webhook: None,
                 slack_webhook: None,
                 mention: Some("<@route>".into()),
@@ -1026,6 +1050,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -1035,6 +1060,7 @@ mod tests {
                     .into_iter()
                     .collect(),
                 channel: Some("route-channel".into()),
+                channel_name: None,
                 webhook: None,
                 slack_webhook: None,
                 mention: Some("<@route>".into()),
@@ -1063,6 +1089,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -1072,6 +1099,7 @@ mod tests {
                     .into_iter()
                     .collect(),
                 channel: Some("route-channel".into()),
+                channel_name: None,
                 webhook: None,
                 slack_webhook: None,
                 mention: Some("<@route>".into()),
@@ -1108,6 +1136,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -1117,6 +1146,7 @@ mod tests {
                     .into_iter()
                     .collect(),
                 channel: Some("agent-route".into()),
+                channel_name: None,
                 webhook: None,
                 slack_webhook: None,
                 mention: None,
@@ -1167,6 +1197,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -1179,6 +1210,7 @@ mod tests {
                 .into_iter()
                 .collect(),
                 channel: Some("session-route".into()),
+                channel_name: None,
                 webhook: None,
                 slack_webhook: None,
                 mention: None,
@@ -1212,6 +1244,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -1224,6 +1257,7 @@ mod tests {
                 .into_iter()
                 .collect(),
                 channel: Some("session-route".into()),
+                channel_name: None,
                 webhook: None,
                 slack_webhook: None,
                 mention: None,
@@ -1269,6 +1303,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -1281,6 +1316,7 @@ mod tests {
                 .into_iter()
                 .collect(),
                 channel: Some("agent-route".into()),
+                channel_name: None,
                 webhook: None,
                 slack_webhook: None,
                 mention: None,
@@ -1318,6 +1354,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![
@@ -1328,6 +1365,7 @@ mod tests {
                         .into_iter()
                         .collect(),
                     channel: Some("repo-a".into()),
+                    channel_name: None,
                     webhook: None,
                     slack_webhook: None,
                     mention: None,
@@ -1342,6 +1380,7 @@ mod tests {
                         .into_iter()
                         .collect(),
                     channel: Some("repo-b".into()),
+                    channel_name: None,
                     webhook: None,
                     slack_webhook: None,
                     mention: None,
@@ -1363,6 +1402,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -1372,6 +1412,7 @@ mod tests {
                     .into_iter()
                     .collect(),
                 channel: Some("repo-name-route".into()),
+                channel_name: None,
                 webhook: None,
                 slack_webhook: None,
                 mention: None,
@@ -1399,6 +1440,7 @@ mod tests {
         let tmux_config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -1408,6 +1450,7 @@ mod tests {
                     .into_iter()
                     .collect(),
                 channel: Some("tmux-session-name".into()),
+                channel_name: None,
                 webhook: None,
                 slack_webhook: None,
                 mention: None,
@@ -1426,6 +1469,7 @@ mod tests {
         let session_config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -1435,6 +1479,7 @@ mod tests {
                     .into_iter()
                     .collect(),
                 channel: Some("session-alias-route".into()),
+                channel_name: None,
                 webhook: None,
                 slack_webhook: None,
                 mention: None,
@@ -1466,6 +1511,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![
@@ -1516,6 +1562,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![
@@ -1566,6 +1613,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -1573,6 +1621,7 @@ mod tests {
                 sink: "discord".into(),
                 filter: Default::default(),
                 channel: None,
+                channel_name: None,
                 webhook: Some("https://discord.com/api/webhooks/123/abc".into()),
                 slack_webhook: None,
                 mention: None,
@@ -1605,6 +1654,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -1612,6 +1662,7 @@ mod tests {
                 sink: "discord".into(),
                 filter: Default::default(),
                 channel: None,
+                channel_name: None,
                 webhook: Some("https://discord.com/api/webhooks/123/abc".into()),
                 slack_webhook: None,
                 mention: None,
@@ -1641,6 +1692,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -1648,6 +1700,7 @@ mod tests {
                 sink: "discord".into(),
                 filter: Default::default(),
                 channel: Some("route-channel".into()),
+                channel_name: None,
                 webhook: None,
                 slack_webhook: None,
                 mention: None,
@@ -1677,6 +1730,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -1684,6 +1738,7 @@ mod tests {
                 sink: "discord".into(),
                 filter: Default::default(),
                 channel: None,
+                channel_name: None,
                 webhook: None,
                 slack_webhook: None,
                 mention: Some("<@route>".into()),
@@ -1713,6 +1768,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default-ch".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -1720,6 +1776,7 @@ mod tests {
                 sink: "discord".into(),
                 filter: Default::default(),
                 channel: Some("route-ch".into()),
+                channel_name: None,
                 webhook: None,
                 slack_webhook: None,
                 mention: None,
@@ -1746,6 +1803,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default-ch".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -1753,6 +1811,7 @@ mod tests {
                 sink: "discord".into(),
                 filter: Default::default(),
                 channel: Some("route-ch".into()),
+                channel_name: None,
                 webhook: None,
                 slack_webhook: None,
                 mention: None,
@@ -1779,6 +1838,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -1837,6 +1897,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -1844,6 +1905,7 @@ mod tests {
                 filter: BTreeMap::from([("session".into(), "xeroclaw-*".into())]),
                 sink: "discord".into(),
                 channel: Some("xeroclaw-dev".into()),
+                channel_name: None,
                 webhook: None,
                 slack_webhook: None,
                 mention: None,
@@ -1865,6 +1927,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -1872,6 +1935,7 @@ mod tests {
                 filter: BTreeMap::from([("session_name".into(), "xeroclaw-*".into())]),
                 sink: "discord".into(),
                 channel: Some("xeroclaw-dev".into()),
+                channel_name: None,
                 webhook: None,
                 slack_webhook: None,
                 mention: None,
@@ -1893,6 +1957,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![
@@ -1935,6 +2000,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -1968,6 +2034,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -1975,6 +2042,7 @@ mod tests {
                 filter: BTreeMap::from([("session".into(), "xeroclaw-*".into())]),
                 sink: "discord".into(),
                 channel: None,
+                channel_name: None,
                 webhook: Some("https://discord.com/api/webhooks/123/abc".into()),
                 slack_webhook: None,
                 mention: None,
@@ -2042,6 +2110,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -2092,6 +2161,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -2133,6 +2203,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("fallback".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -2160,6 +2231,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![
@@ -2201,6 +2273,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: None,
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![],
@@ -2220,6 +2293,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("general".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {

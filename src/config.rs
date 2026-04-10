@@ -115,6 +115,9 @@ impl DispatchConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DefaultsConfig {
     pub channel: Option<String>,
+    /// Human-readable channel name hint for the default channel (binding verification).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_name: Option<String>,
     #[serde(default)]
     pub format: MessageFormat,
 }
@@ -123,6 +126,7 @@ impl Default for DefaultsConfig {
     fn default() -> Self {
         Self {
             channel: None,
+            channel_name: None,
             format: MessageFormat::Compact,
         }
     }
@@ -136,6 +140,11 @@ pub struct RouteRule {
     #[serde(default = "default_sink_name")]
     pub sink: String,
     pub channel: Option<String>,
+    /// Human-readable Discord channel name hint for binding verification.
+    /// When set, `clawhip config verify-bindings` compares the live channel
+    /// name against this value to detect drift.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_name: Option<String>,
     pub webhook: Option<String>,
     pub slack_webhook: Option<String>,
     pub mention: Option<String>,
@@ -152,6 +161,7 @@ impl Default for RouteRule {
             filter: BTreeMap::new(),
             sink: default_sink_name(),
             channel: None,
+            channel_name: None,
             webhook: None,
             slack_webhook: None,
             mention: None,
@@ -253,6 +263,9 @@ pub struct GitRepoMonitor {
     #[serde(default)]
     pub emit_pr_status: bool,
     pub channel: Option<String>,
+    /// Human-readable channel name hint for binding verification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_name: Option<String>,
     pub mention: Option<String>,
     pub format: Option<MessageFormat>,
 }
@@ -269,6 +282,7 @@ impl Default for GitRepoMonitor {
             emit_issue_opened: true,
             emit_pr_status: false,
             channel: None,
+            channel_name: None,
             mention: None,
             format: None,
         }
@@ -285,6 +299,9 @@ pub struct TmuxSessionMonitor {
     #[serde(default = "default_stale_minutes")]
     pub stale_minutes: u64,
     pub channel: Option<String>,
+    /// Human-readable channel name hint for binding verification.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub channel_name: Option<String>,
     pub mention: Option<String>,
     pub format: Option<MessageFormat>,
 }
@@ -297,6 +314,7 @@ impl Default for TmuxSessionMonitor {
             keyword_window_secs: default_keyword_window_secs(),
             stale_minutes: default_stale_minutes(),
             channel: None,
+            channel_name: None,
             mention: None,
             format: None,
         }
@@ -796,6 +814,7 @@ impl AppConfig {
                     filter: BTreeMap::new(),
                     sink: default_sink_name(),
                     channel: None,
+                    channel_name: None,
                     webhook: Some(webhook),
                     slack_webhook: None,
                     mention: None,
@@ -814,6 +833,66 @@ impl AppConfig {
                     .into(),
             ),
         }
+    }
+
+    /// Scaffold or update a repo→channel route with a binding-verify hint.
+    ///
+    /// Creates a `[[routes]]` entry shaped as:
+    ///
+    /// ```toml
+    /// [[routes]]
+    /// event = "*"
+    /// filter = { repo = "<repo>" }
+    /// sink = "discord"
+    /// channel = "<channel_id>"
+    /// channel_name = "<live_name>"  # hint, used by verify-bindings
+    /// ```
+    ///
+    /// If an existing route matches the exact `(event="*", filter={repo=...},
+    /// sink="discord")` shape, its channel and channel_name are updated in place
+    /// instead of appending a duplicate.
+    pub fn apply_repo_binding(
+        &mut self,
+        repo: &str,
+        channel_id: &str,
+        channel_name: Option<&str>,
+    ) -> Result<()> {
+        let repo = normalize_text(Some(repo.to_string()))
+            .ok_or_else(|| "repo binding requires a non-empty repo name".to_string())?;
+        let channel_id = normalize_text(Some(channel_id.to_string()))
+            .ok_or_else(|| "repo binding requires a non-empty channel id".to_string())?;
+        let channel_name = channel_name.and_then(|value| normalize_text(Some(value.to_string())));
+
+        let existing = self
+            .routes
+            .iter_mut()
+            .find(|route| is_repo_binding_route(route, &repo));
+
+        match existing {
+            Some(route) => {
+                route.channel = Some(channel_id);
+                route.channel_name = channel_name;
+                route.webhook = None;
+            }
+            None => {
+                let mut filter = BTreeMap::new();
+                filter.insert("repo".to_string(), repo);
+                self.routes.push(RouteRule {
+                    event: "*".to_string(),
+                    filter,
+                    sink: default_sink_name(),
+                    channel: Some(channel_id),
+                    channel_name,
+                    webhook: None,
+                    slack_webhook: None,
+                    mention: None,
+                    allow_dynamic_tokens: false,
+                    format: None,
+                    template: None,
+                });
+            }
+        }
+        Ok(())
     }
 
     pub fn set_discord_bot_token(&mut self, bot_token: String) {
@@ -951,6 +1030,7 @@ impl AppConfig {
         for route in &mut self.routes {
             route.sink = normalize_text(Some(route.sink.clone())).unwrap_or_else(default_sink_name);
             route.channel = normalize_text(route.channel.clone());
+            route.channel_name = normalize_text(route.channel_name.clone());
             route.webhook = normalize_text(route.webhook.clone());
             route.slack_webhook = normalize_text(route.slack_webhook.clone());
             route.mention = normalize_text(route.mention.clone());
@@ -959,6 +1039,7 @@ impl AppConfig {
 
         for repo in &mut self.monitors.git.repos {
             repo.channel = normalize_text(repo.channel.clone());
+            repo.channel_name = normalize_text(repo.channel_name.clone());
             repo.mention = normalize_text(repo.mention.clone());
             repo.name = normalize_text(repo.name.clone());
             repo.github_repo = normalize_text(repo.github_repo.clone());
@@ -966,6 +1047,7 @@ impl AppConfig {
 
         for session in &mut self.monitors.tmux.sessions {
             session.channel = normalize_text(session.channel.clone());
+            session.channel_name = normalize_text(session.channel_name.clone());
             session.mention = normalize_text(session.mention.clone());
         }
 
@@ -1011,6 +1093,18 @@ impl AppConfig {
             .filter(|route| route.has_any_webhook_target())
             .count()
     }
+}
+
+fn is_repo_binding_route(route: &RouteRule, repo: &str) -> bool {
+    route.event == "*"
+        && route.sink.trim() == "discord"
+        && route.slack_webhook.is_none()
+        && route.filter.len() == 1
+        && route
+            .filter
+            .get("repo")
+            .map(|value| value == repo)
+            .unwrap_or(false)
 }
 
 fn is_canonical_quickstart_route(route: &RouteRule) -> bool {
@@ -1292,6 +1386,7 @@ mod tests {
             },
             defaults: DefaultsConfig {
                 channel: Some("general".into()),
+                channel_name: None,
                 format: MessageFormat::Compact,
             },
             routes: vec![RouteRule {

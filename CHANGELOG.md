@@ -18,11 +18,17 @@
 
 ### Highlights
 
+- add Discord channel binding verification so misbound repo→channel routes are caught before config writes (#198)
+  - new `clawhip config verify-bindings [--json]` command audits every channel ID in the config against live Discord state and exits non-zero on drift
+  - new `clawhip setup --bind REPO=CHANNEL_ID [--expect-name REPO=NAME]` resolves the channel via Discord, writes a route with a `channel_name` hint, and refuses stale/mismatched bindings before saving
+  - new optional `channel_name` hint field on `[[routes]]`, `[defaults]`, `[[monitors.git.repos]]`, and `[[monitors.tmux.sessions]]` — advisory only, old configs continue to load unchanged
 - add `clawhip release preflight` to verify `Cargo.toml` / `Cargo.lock` / `CHANGELOG.md` stay consistent with the intended release tag before pushing (#189)
 - wire the preflight into `.github/workflows/release.yml` so an inconsistent release tag is rejected before `dist plan` and `publish-crates` run
 
 ### How to use
 
+- drift audit: `clawhip config verify-bindings` (text) or `--json` for CI. Exit code is non-zero on any failed binding.
+- bind a repo to a Discord channel safely: `clawhip setup --bind oh-my-codex=1480171106324189335 --expect-name oh-my-codex=omx-dev`. Clawhip resolves the channel live, prints `bind: oh-my-codex -> 1480171106324189335 (#omx-dev)`, and writes `[[routes]] filter = { repo = "oh-my-codex" }, channel = "…", channel_name = "omx-dev"`. Name mismatches and 404s abort before the write.
 - run `clawhip release preflight` locally in the repo root before tagging — omit the version to default to the current `Cargo.toml` version, or pass an explicit tag (`clawhip release preflight v0.6.5`, `clawhip release preflight refs/tags/v0.6.5`)
 - the same command runs in CI via the new `preflight` job gating the release workflow
 

@@ -730,6 +730,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: crate::events::MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -737,6 +738,7 @@ mod tests {
                 filter: BTreeMap::from([("session".into(), "xeroclaw-*".into())]),
                 sink: "discord".into(),
                 channel: Some("xeroclaw-dev".into()),
+                channel_name: None,
                 webhook: None,
                 slack_webhook: None,
                 mention: None,
@@ -781,6 +783,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: crate::events::MessageFormat::Compact,
             },
             routes: vec![
@@ -834,6 +837,7 @@ mod tests {
         let config = AppConfig {
             defaults: DefaultsConfig {
                 channel: Some("default".into()),
+                channel_name: None,
                 format: crate::events::MessageFormat::Compact,
             },
             routes: vec![RouteRule {
@@ -841,6 +845,7 @@ mod tests {
                 filter: BTreeMap::from([("session".into(), "xeroclaw-*".into())]),
                 sink: "discord".into(),
                 channel: Some("xeroclaw-dev".into()),
+                channel_name: None,
                 webhook: None,
                 slack_webhook: None,
                 mention: None,

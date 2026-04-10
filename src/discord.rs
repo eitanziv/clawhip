@@ -8,6 +8,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::Result;
+use crate::binding_verify::ChannelLookup;
 use crate::config::AppConfig;
 use crate::core::circuit_breaker::CircuitBreaker;
 use crate::core::dlq::{Dlq, DlqEntry};
@@ -45,6 +46,12 @@ struct DiscordSendError {
 #[derive(Debug, Deserialize)]
 struct DiscordRateLimitBody {
     retry_after: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DiscordChannelBody {
+    #[serde(default)]
+    name: Option<String>,
 }
 
 impl DiscordClient {
@@ -130,6 +137,62 @@ impl DiscordClient {
         let error = format!("Discord delivery exhausted retries for {key}");
         self.record_dlq(target, message, MAX_ATTEMPTS, error.clone());
         Err(error.into())
+    }
+
+    /// Look up a Discord channel by ID using the bot API.
+    ///
+    /// Returns a typed `ChannelLookup` that surfaces the live channel name on
+    /// success or a specific failure mode (not-found, forbidden, unauthorized,
+    /// no-token, transport error). The DLQ and circuit breaker are deliberately
+    /// NOT touched — binding verification is a read-only operator probe, not a
+    /// dispatch event, and should never mark the delivery circuit as degraded.
+    pub async fn lookup_channel(&self, channel_id: &str) -> ChannelLookup {
+        let Some(client) = self.bot_client.as_ref() else {
+            return ChannelLookup::NoToken;
+        };
+
+        let url = format!(
+            "{}/channels/{}",
+            self.api_base.trim_end_matches('/'),
+            channel_id
+        );
+
+        let response = match client.get(url).send().await {
+            Ok(response) => response,
+            Err(error) => {
+                return ChannelLookup::Transport(format!(
+                    "Discord channel lookup request failed: {error}"
+                ));
+            }
+        };
+
+        let status = response.status();
+        if status.is_success() {
+            let body = match response.json::<DiscordChannelBody>().await {
+                Ok(body) => body,
+                Err(error) => {
+                    return ChannelLookup::Transport(format!(
+                        "Discord channel lookup body parse failed: {error}"
+                    ));
+                }
+            };
+            return ChannelLookup::Found {
+                id: channel_id.to_string(),
+                name: body.name,
+            };
+        }
+
+        match status {
+            StatusCode::NOT_FOUND => ChannelLookup::NotFound,
+            StatusCode::FORBIDDEN => ChannelLookup::Forbidden,
+            StatusCode::UNAUTHORIZED => ChannelLookup::Unauthorized,
+            other => {
+                let body = response.text().await.unwrap_or_default();
+                ChannelLookup::Transport(format!(
+                    "Discord channel lookup failed with {other}: {body}"
+                ))
+            }
+        }
     }
 
     async fn send_message(
@@ -260,6 +323,34 @@ impl DiscordClient {
     }
 
     #[cfg(test)]
+    pub(crate) fn for_tests_with_api_base(bot_token: &str, api_base: String) -> Result<Self> {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bot {bot_token}"))?,
+        );
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+        let bot_client = Some(
+            reqwest::Client::builder()
+                .default_headers(headers)
+                .build()?,
+        );
+        let webhook_client = reqwest::Client::new();
+
+        Ok(Self {
+            bot_client,
+            webhook_client,
+            api_base,
+            state: Arc::new(Mutex::new(DiscordState {
+                limiter: RateLimiter::new(RATE_LIMIT_CAPACITY, RATE_LIMIT_REFILL_PER_SEC),
+                circuits: HashMap::new(),
+                dlq: Dlq::default(),
+            })),
+        })
+    }
+
+    #[cfg(test)]
     fn dlq_entries(&self) -> Vec<DlqEntry> {
         self.state
             .lock()
@@ -375,6 +466,136 @@ mod tests {
             .await
             .unwrap();
         server.await.unwrap();
+        assert!(client.dlq_entries().is_empty());
+    }
+
+    /// Serve a single HTTP response on a bound TCP listener.
+    async fn serve_once(
+        listener: tokio::net::TcpListener,
+        status_line: &'static str,
+        body: &'static str,
+    ) {
+        let (mut stream, _) = listener.accept().await.unwrap();
+        let mut buf = vec![0_u8; 4096];
+        let _ = stream.read(&mut buf).await.unwrap();
+        let response = format!(
+            "{status_line}\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+            body.len(),
+        );
+        stream.write_all(response.as_bytes()).await.unwrap();
+        stream.shutdown().await.ok();
+    }
+
+    #[tokio::test]
+    async fn lookup_channel_returns_found_with_name() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(serve_once(
+            listener,
+            "HTTP/1.1 200 OK",
+            r#"{"id":"1480171113253175356","name":"clawhip-dev","type":0}"#,
+        ));
+
+        let client =
+            DiscordClient::for_tests_with_api_base("test-token", format!("http://{addr}")).unwrap();
+        let lookup = client.lookup_channel("1480171113253175356").await;
+        server.await.unwrap();
+
+        match lookup {
+            ChannelLookup::Found { id, name } => {
+                assert_eq!(id, "1480171113253175356");
+                assert_eq!(name.as_deref(), Some("clawhip-dev"));
+            }
+            other => panic!("expected Found, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn lookup_channel_returns_not_found() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(serve_once(
+            listener,
+            "HTTP/1.1 404 Not Found",
+            r#"{"message":"Unknown Channel","code":10003}"#,
+        ));
+
+        let client =
+            DiscordClient::for_tests_with_api_base("test-token", format!("http://{addr}")).unwrap();
+        let lookup = client.lookup_channel("9999999999999999").await;
+        server.await.unwrap();
+
+        assert!(matches!(lookup, ChannelLookup::NotFound));
+    }
+
+    #[tokio::test]
+    async fn lookup_channel_returns_forbidden() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(serve_once(
+            listener,
+            "HTTP/1.1 403 Forbidden",
+            r#"{"message":"Missing Access","code":50001}"#,
+        ));
+
+        let client =
+            DiscordClient::for_tests_with_api_base("test-token", format!("http://{addr}")).unwrap();
+        let lookup = client.lookup_channel("1111").await;
+        server.await.unwrap();
+
+        assert!(matches!(lookup, ChannelLookup::Forbidden));
+    }
+
+    #[tokio::test]
+    async fn lookup_channel_returns_unauthorized() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(serve_once(
+            listener,
+            "HTTP/1.1 401 Unauthorized",
+            r#"{"message":"401: Unauthorized","code":0}"#,
+        ));
+
+        let client =
+            DiscordClient::for_tests_with_api_base("bad-token", format!("http://{addr}")).unwrap();
+        let lookup = client.lookup_channel("1111").await;
+        server.await.unwrap();
+
+        assert!(matches!(lookup, ChannelLookup::Unauthorized));
+    }
+
+    #[tokio::test]
+    async fn lookup_channel_returns_no_token_when_missing() {
+        // Build a DiscordClient with no bot token (no env, no config).
+        // Use a bogus env override so we never hit the real API.
+        unsafe {
+            std::env::set_var("CLAWHIP_DISCORD_API_BASE", "http://127.0.0.1:1");
+        }
+        let client = DiscordClient::from_config(Arc::new(AppConfig::default())).unwrap();
+        unsafe {
+            std::env::remove_var("CLAWHIP_DISCORD_API_BASE");
+        }
+        // Config has no bot token and no webhook route; lookup should skip.
+        let lookup = client.lookup_channel("1111").await;
+        assert!(matches!(lookup, ChannelLookup::NoToken));
+    }
+
+    #[tokio::test]
+    async fn lookup_channel_does_not_touch_dlq_on_failure() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(serve_once(
+            listener,
+            "HTTP/1.1 404 Not Found",
+            r#"{"message":"Unknown Channel"}"#,
+        ));
+
+        let client =
+            DiscordClient::for_tests_with_api_base("test-token", format!("http://{addr}")).unwrap();
+        let _ = client.lookup_channel("1").await;
+        server.await.unwrap();
+
+        // Lookup failures must NOT pollute the DLQ — it's a read-only probe.
         assert!(client.dlq_entries().is_empty());
     }
 
