@@ -42,11 +42,11 @@ pub enum Commands {
     },
     /// Check daemon health/status.
     Status,
-    /// Scaffold a quick-start configuration.
-    Setup {
-        #[arg(long)]
-        webhook: String,
-    },
+    /// Scaffold common setup presets without editing the full config manually.
+    #[command(
+        after_help = "Supports only the fixed five-preset setup surface. For advanced routes or monitors, use `clawhip config` for the bounded preset editor or edit the config file manually."
+    )]
+    Setup(SetupArgs),
     /// Send a custom event to the local daemon.
     Send {
         #[arg(long)]
@@ -136,6 +136,26 @@ pub enum Commands {
     },
     /// Enable repo-local native hook forwarding for Claude Code and Codex.
     EnableHook(EnableHookArgs),
+}
+
+#[derive(Debug, Clone, Args)]
+#[group(required = true, multiple = true)]
+pub struct SetupArgs {
+    /// Discord webhook quickstart URL.
+    #[arg(long)]
+    pub webhook: Option<String>,
+    /// Discord bot token for channel delivery.
+    #[arg(long = "bot-token")]
+    pub bot_token: Option<String>,
+    /// Default Discord channel ID.
+    #[arg(long = "default-channel")]
+    pub default_channel: Option<String>,
+    /// Default message format.
+    #[arg(long = "default-format", value_enum)]
+    pub default_format: Option<MessageFormat>,
+    /// Base URL for local daemon commands.
+    #[arg(long = "daemon-base-url")]
+    pub daemon_base_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -662,9 +682,12 @@ pub struct HooksInstallArgs {
 
 #[derive(Debug, Clone, Default, Subcommand)]
 pub enum ConfigCommand {
+    /// Edit the five common setup presets interactively; advanced routes and monitors remain manual-edit territory.
     #[default]
     Interactive,
+    /// Print the current config file.
     Show,
+    /// Print the active config file path.
     Path,
 }
 
@@ -909,11 +932,74 @@ mod tests {
             "https://discord.com/api/webhooks/123/abc",
         ]);
 
-        let Commands::Setup { webhook } = cli.command.expect("setup command") else {
+        let Commands::Setup(args) = cli.command.expect("setup command") else {
             panic!("expected setup command");
         };
 
-        assert_eq!(webhook, "https://discord.com/api/webhooks/123/abc");
+        assert_eq!(
+            args.webhook.as_deref(),
+            Some("https://discord.com/api/webhooks/123/abc")
+        );
+        assert!(args.bot_token.is_none());
+    }
+
+    #[test]
+    fn parses_setup_mixed_preset_flags() {
+        let cli = Cli::parse_from([
+            "clawhip",
+            "setup",
+            "--webhook",
+            "https://discord.com/api/webhooks/123/abc",
+            "--bot-token",
+            "discord-token",
+            "--default-channel",
+            "123456",
+            "--default-format",
+            "alert",
+            "--daemon-base-url",
+            "http://127.0.0.1:3000",
+        ]);
+
+        let Commands::Setup(args) = cli.command.expect("setup command") else {
+            panic!("expected setup command");
+        };
+
+        assert_eq!(
+            args.webhook.as_deref(),
+            Some("https://discord.com/api/webhooks/123/abc")
+        );
+        assert_eq!(args.bot_token.as_deref(), Some("discord-token"));
+        assert_eq!(args.default_channel.as_deref(), Some("123456"));
+        assert_eq!(args.default_format, Some(MessageFormat::Alert));
+        assert_eq!(
+            args.daemon_base_url.as_deref(),
+            Some("http://127.0.0.1:3000")
+        );
+    }
+
+    #[test]
+    fn setup_requires_at_least_one_flag() {
+        use clap::error::ErrorKind;
+
+        let error = Cli::try_parse_from(["clawhip", "setup"]).expect_err("setup should fail");
+        assert_eq!(error.kind(), ErrorKind::MissingRequiredArgument);
+    }
+
+    #[test]
+    fn setup_help_mentions_bounded_surface_and_manual_escape_hatch() {
+        use clap::CommandFactory;
+
+        let mut command = Cli::command();
+        let setup = command
+            .find_subcommand_mut("setup")
+            .expect("setup subcommand");
+        let mut help = Vec::new();
+        setup.write_long_help(&mut help).expect("help");
+        let help = String::from_utf8(help).expect("utf8 help");
+
+        assert!(help.contains("fixed five-preset setup surface"));
+        assert!(help.contains("clawhip config"));
+        assert!(help.contains("advanced routes or monitors"));
     }
 
     #[test]
