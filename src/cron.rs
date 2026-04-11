@@ -214,11 +214,7 @@ impl CronScheduler {
                             *c
                         };
                         emitter
-                            .emit(build_hardening_event(
-                                &job.config,
-                                state.as_ref(),
-                                cycle,
-                            ))
+                            .emit(build_hardening_event(&job.config, state.as_ref(), cycle))
                             .await?;
                         executed.push(job.config.id.clone());
                         continue;
@@ -334,7 +330,11 @@ const HARDENING_CANDIDATES: &[(&str, &str)] = &[
 /// zero-backlog fingerprint.  `cycle` is the 1-based count of consecutive
 /// suppressed ticks for this job; it drives candidate selection and is
 /// embedded in the payload so downstream consumers can observe the rotation.
-fn build_hardening_event(job: &CronJob, state: Option<&StateEvaluation>, cycle: u64) -> IncomingEvent {
+fn build_hardening_event(
+    job: &CronJob,
+    state: Option<&StateEvaluation>,
+    cycle: u64,
+) -> IncomingEvent {
     let idx = ((cycle - 1) as usize) % HARDENING_CANDIDATES.len();
     let (lane, rationale) = HARDENING_CANDIDATES[idx];
     let message = format!("[zero-backlog hardening] {lane} — {rationale}");
@@ -864,8 +864,7 @@ mod tests {
             "tick 3 must be hardening cycle 2"
         );
         assert_ne!(
-            events[2].payload["hardening_lane"],
-            events[1].payload["hardening_lane"],
+            events[2].payload["hardening_lane"], events[1].payload["hardening_lane"],
             "consecutive hardening ticks must rotate through different lanes"
         );
     }
@@ -990,8 +989,14 @@ mod tests {
             5,
             "all five ticks emit: ticks 1/3/4 normal, ticks 2/5 hardening"
         );
-        assert!(events[1].payload.get("hardening_lane").is_some(), "tick 2 is hardening");
-        assert!(events[4].payload.get("hardening_lane").is_some(), "tick 5 is hardening");
+        assert!(
+            events[1].payload.get("hardening_lane").is_some(),
+            "tick 2 is hardening"
+        );
+        assert!(
+            events[4].payload.get("hardening_lane").is_some(),
+            "tick 5 is hardening"
+        );
         // Hardening counter resets after the nonzero interlude, so tick 5 restarts at cycle 1.
         assert_eq!(events[4].payload["hardening_cycle"], json!(1_u64));
     }
@@ -1075,7 +1080,11 @@ mod tests {
             .expect("restarted emit");
 
         let events = emitter.events.lock().expect("events lock");
-        assert_eq!(events.len(), 2, "tick 1 normal + tick 2 hardening after restart");
+        assert_eq!(
+            events.len(),
+            2,
+            "tick 1 normal + tick 2 hardening after restart"
+        );
         assert_eq!(events[0].payload["message"], json!("check open PRs"));
         assert_eq!(
             events[1].payload["hardening_cycle"],
