@@ -22,6 +22,9 @@ pub struct InstallReport {
 pub fn install(args: HooksInstallArgs) -> Result<()> {
     let report = run_install(&args)?;
 
+    if args.scope == HookInstallScope::Project {
+        println!("Project scope is deprecated; installing to the canonical global hook location.");
+    }
     println!("Installed provider-native hook forwarding:");
     for path in &report.generated_files {
         println!("  {}", path.display());
@@ -45,12 +48,6 @@ fn run_install(args: &HooksInstallArgs) -> Result<InstallReport> {
     write_generated_file(&hook_script_path, generated_hook_script(), args.force)?;
     generated_files.push(hook_script_path.clone());
 
-    if args.scope == HookInstallScope::Project {
-        warnings.push(
-            "--scope project is deprecated; clawhip now installs only the global shared hook surface and no longer writes repo-local hook state".to_string(),
-        );
-    }
-
     for provider in providers {
         let path = match provider {
             HookProvider::Codex => write_codex_hooks(&root, &hook_script_path)?,
@@ -66,9 +63,10 @@ fn run_install(args: &HooksInstallArgs) -> Result<InstallReport> {
 }
 
 fn resolve_install_root(args: &HooksInstallArgs) -> Result<PathBuf> {
-    match args.scope {
-        HookInstallScope::Project | HookInstallScope::Global => home_dir(),
+    if args.scope == HookInstallScope::Project {
+        let _ = args.root.as_ref();
     }
+    home_dir()
 }
 
 fn selected_providers(args: &HooksInstallArgs) -> Vec<HookProvider> {
@@ -274,15 +272,12 @@ mod tests {
 
     #[test]
     #[serial]
-    fn install_project_scope_is_a_warning_only_global_shim() {
-        let tempdir = tempdir().expect("tempdir");
-        let fake_home = tempdir.path().join("home");
-        let repo = tempdir.path().join("repo");
-        fs::create_dir_all(&fake_home).expect("create fake home");
-        fs::create_dir_all(&repo).expect("create repo");
+    fn install_project_scope_writes_global_provider_files_without_project_state() {
+        let dir = tempdir().expect("tempdir");
+        let home = dir.path().join("home");
         let previous_home = std::env::var_os("HOME");
         unsafe {
-            std::env::set_var("HOME", &fake_home);
+            std::env::set_var("HOME", &home);
         }
         let report = run_install(&HooksInstallArgs {
             all: true,
@@ -293,34 +288,14 @@ mod tests {
         })
         .expect("install");
 
-        assert!(
-            report
-                .generated_files
-                .contains(&fake_home.join(HOOK_SCRIPT))
-        );
-        assert!(
-            report
-                .generated_files
-                .contains(&fake_home.join(CODEX_HOOKS_FILE))
-        );
-        assert!(
-            report
-                .generated_files
-                .contains(&fake_home.join(CLAUDE_SETTINGS_FILE))
-        );
-        assert!(
-            report
-                .warnings
-                .iter()
-                .any(|warning| warning.contains("--scope project is deprecated"))
-        );
-        assert!(!repo.join(".clawhip/project.json").exists());
-        assert!(!repo.join(".codex/hooks.json").exists());
-        assert!(!repo.join(".claude/settings.json").exists());
+        assert!(report.generated_files.contains(&home.join(HOOK_SCRIPT)));
+        assert!(report.generated_files.contains(&home.join(CODEX_HOOKS_FILE)));
+        assert!(report.generated_files.contains(&home.join(CLAUDE_SETTINGS_FILE)));
+        assert!(!dir.path().join(".clawhip/project.json").exists());
 
-        if let Some(previous_home) = previous_home {
+        if let Some(previous) = previous_home {
             unsafe {
-                std::env::set_var("HOME", previous_home);
+                std::env::set_var("HOME", previous);
             }
         } else {
             unsafe {
