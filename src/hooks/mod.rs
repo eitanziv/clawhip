@@ -10,13 +10,13 @@ use serde_json::{Map, Value, json};
 use crate::Result;
 use crate::cli::{HookInstallScope, HookProvider, HooksInstallArgs};
 use crate::native_hooks::{
-    CLAUDE_SETTINGS_FILE, CLAWHIP_PROJECT_FILE, CODEX_HOOKS_FILE, HOOK_SCRIPT, SHARED_HOOK_EVENTS,
-    generated_hook_script,
+    CLAUDE_SETTINGS_FILE, CODEX_HOOKS_FILE, HOOK_SCRIPT, SHARED_HOOK_EVENTS, generated_hook_script,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InstallReport {
     pub generated_files: Vec<PathBuf>,
+    pub warnings: Vec<String>,
 }
 
 pub fn install(args: HooksInstallArgs) -> Result<()> {
@@ -25,6 +25,9 @@ pub fn install(args: HooksInstallArgs) -> Result<()> {
     println!("Installed provider-native hook forwarding:");
     for path in &report.generated_files {
         println!("  {}", path.display());
+    }
+    for warning in &report.warnings {
+        eprintln!("warning: {warning}");
     }
     println!("Supported shared events: {}", SHARED_HOOK_EVENTS.join(", "));
     println!("Ingress: clawhip native hook --provider <codex|claude-code>");
@@ -36,14 +39,16 @@ fn run_install(args: &HooksInstallArgs) -> Result<InstallReport> {
     let root = resolve_install_root(args)?;
     let providers = selected_providers(args);
     let mut generated_files = Vec::new();
+    let mut warnings = Vec::new();
 
     let hook_script_path = root.join(HOOK_SCRIPT);
     write_generated_file(&hook_script_path, generated_hook_script(), args.force)?;
     generated_files.push(hook_script_path.clone());
 
     if args.scope == HookInstallScope::Project {
-        let metadata_path = ensure_project_metadata(&root, args.force)?;
-        generated_files.push(metadata_path);
+        warnings.push(
+            "--scope project is deprecated; clawhip now installs only the global shared hook surface and no longer writes repo-local hook state".to_string(),
+        );
     }
 
     for provider in providers {
@@ -54,17 +59,15 @@ fn run_install(args: &HooksInstallArgs) -> Result<InstallReport> {
         generated_files.push(path);
     }
 
-    Ok(InstallReport { generated_files })
+    Ok(InstallReport {
+        generated_files,
+        warnings,
+    })
 }
 
 fn resolve_install_root(args: &HooksInstallArgs) -> Result<PathBuf> {
     match args.scope {
-        HookInstallScope::Project => Ok(args
-            .root
-            .clone()
-            .unwrap_or(std::env::current_dir()?)
-            .canonicalize()?),
-        HookInstallScope::Global => home_dir(),
+        HookInstallScope::Project | HookInstallScope::Global => home_dir(),
     }
 }
 
@@ -189,21 +192,6 @@ fn hook_command_matches(hook: &Value, command: &str) -> bool {
         && hook.get("command").and_then(Value::as_str) == Some(command)
 }
 
-fn ensure_project_metadata(root: &Path, force: bool) -> Result<PathBuf> {
-    let path = root.join(CLAWHIP_PROJECT_FILE);
-    let project_name = root
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("unknown")
-        .to_string();
-    let content = serde_json::to_string_pretty(&json!({
-        "project": project_name,
-        "repo_name": project_name,
-    }))? + "\n";
-    write_generated_file(&path, &content, force)?;
-    Ok(path)
-}
-
 fn write_generated_file(path: &Path, content: &str, force: bool) -> Result<()> {
     if path.exists() && !force {
         return Ok(());
@@ -281,16 +269,26 @@ fn set_executable(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use tempfile::tempdir;
 
     #[test]
-    fn install_project_scope_writes_generic_provider_files() {
-        let dir = tempdir().expect("tempdir");
+    #[serial]
+    fn install_project_scope_is_a_warning_only_global_shim() {
+        let tempdir = tempdir().expect("tempdir");
+        let fake_home = tempdir.path().join("home");
+        let repo = tempdir.path().join("repo");
+        fs::create_dir_all(&fake_home).expect("create fake home");
+        fs::create_dir_all(&repo).expect("create repo");
+        let previous_home = std::env::var_os("HOME");
+        unsafe {
+            std::env::set_var("HOME", &fake_home);
+        }
         let report = run_install(&HooksInstallArgs {
             all: true,
             provider: Vec::new(),
             scope: HookInstallScope::Project,
-            root: Some(dir.path().to_path_buf()),
+            root: Some(repo.clone()),
             force: false,
         })
         .expect("install");
@@ -298,23 +296,37 @@ mod tests {
         assert!(
             report
                 .generated_files
-                .contains(&dir.path().join(HOOK_SCRIPT))
+                .contains(&fake_home.join(HOOK_SCRIPT))
         );
         assert!(
             report
                 .generated_files
-                .contains(&dir.path().join(CLAWHIP_PROJECT_FILE))
+                .contains(&fake_home.join(CODEX_HOOKS_FILE))
         );
         assert!(
             report
                 .generated_files
-                .contains(&dir.path().join(CODEX_HOOKS_FILE))
+                .contains(&fake_home.join(CLAUDE_SETTINGS_FILE))
         );
         assert!(
             report
-                .generated_files
-                .contains(&dir.path().join(CLAUDE_SETTINGS_FILE))
+                .warnings
+                .iter()
+                .any(|warning| warning.contains("--scope project is deprecated"))
         );
+        assert!(!repo.join(".clawhip/project.json").exists());
+        assert!(!repo.join(".codex/hooks.json").exists());
+        assert!(!repo.join(".claude/settings.json").exists());
+
+        if let Some(previous_home) = previous_home {
+            unsafe {
+                std::env::set_var("HOME", previous_home);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
     }
 
     #[test]
