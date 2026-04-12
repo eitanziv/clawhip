@@ -61,7 +61,9 @@ cat payload.json | clawhip native hook --provider codex
 
 Recommended installation model:
 
-- install provider-native hooks at project or global scope
+- install the shared clawhip bridge in `~/.clawhip/hooks/native-hook.mjs`
+- for Codex, align with the official hook contract: use either `~/.codex/hooks.json` or `<repo>/.codex/hooks.json`
+- for Claude Code, install the provider-native hook config globally in `~/.claude/settings.json`
 - keep provider config in the provider-owned config files
 - keep routing metadata in `.clawhip/project.json`
 - use `.clawhip/hooks/` only for additive augmentation such as frontmatter or recent context
@@ -586,7 +588,7 @@ Behavior:
 - `deliver` is the prompt recovery path for an already-running hooked tmux-backed provider session
 - `tmux list` shows active daemon-known watches with source, registration timestamp, and parent-process info
 - final delivery still goes through daemon routing
-- `deliver` refuses arbitrary shells and requires repo-local prompt-submit-aware hook setup (`clawhip hooks install --all --scope project`)
+- `deliver` refuses arbitrary shells and requires prompt-submit-aware hook setup (`clawhip hooks install --provider codex --scope global|project` for Codex, with the bridge in `~/.clawhip`, or `clawhip hooks install --provider claude-code --scope global` for Claude Code)
 
 Routing note:
 - session names are labels for operators, not routing authority

@@ -10,8 +10,7 @@ use serde_json::{Map, Value, json};
 use crate::Result;
 use crate::cli::{HookInstallScope, HookProvider, HooksInstallArgs};
 use crate::native_hooks::{
-    CLAUDE_SETTINGS_FILE, CLAWHIP_PROJECT_FILE, CODEX_HOOKS_FILE, HOOK_SCRIPT, SHARED_HOOK_EVENTS,
-    generated_hook_script,
+    CLAUDE_SETTINGS_FILE, CODEX_HOOKS_FILE, HOOK_SCRIPT, SHARED_HOOK_EVENTS, generated_hook_script,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,28 +32,45 @@ pub fn install(args: HooksInstallArgs) -> Result<()> {
 }
 
 fn run_install(args: &HooksInstallArgs) -> Result<InstallReport> {
+    ensure_supported_install_scope(args)?;
     let root = resolve_install_root(args)?;
+    let global_hook_script_path = home_dir()?.join(HOOK_SCRIPT);
     let providers = selected_providers(args);
     let mut generated_files = Vec::new();
 
-    let hook_script_path = root.join(HOOK_SCRIPT);
-    write_generated_file(&hook_script_path, generated_hook_script(), args.force)?;
-    generated_files.push(hook_script_path.clone());
-
-    if args.scope == HookInstallScope::Project {
-        let metadata_path = ensure_project_metadata(&root, args.force)?;
-        generated_files.push(metadata_path);
-    }
+    write_generated_file(
+        &global_hook_script_path,
+        generated_hook_script(),
+        args.force,
+    )?;
+    generated_files.push(global_hook_script_path.clone());
 
     for provider in providers {
         let path = match provider {
-            HookProvider::Codex => write_codex_hooks(&root, &hook_script_path)?,
-            HookProvider::ClaudeCode => write_claude_settings(&root, &hook_script_path)?,
+            HookProvider::Codex => write_codex_hooks(&root, &global_hook_script_path)?,
+            HookProvider::ClaudeCode => write_claude_settings(&root, &global_hook_script_path)?,
         };
         generated_files.push(path);
     }
 
     Ok(InstallReport { generated_files })
+}
+
+fn ensure_supported_install_scope(args: &HooksInstallArgs) -> Result<()> {
+    if args.scope != HookInstallScope::Project {
+        return Ok(());
+    }
+
+    let includes_claude =
+        args.all || args.provider.is_empty() || args.provider.contains(&HookProvider::ClaudeCode);
+    if !includes_claude {
+        return Ok(());
+    }
+
+    Err(anyhow!(
+        "Claude Code provider-native hook forwarding is global-only; Codex may use either ~/.codex/hooks.json or <repo>/.codex/hooks.json with the clawhip bridge in ~/.clawhip"
+    )
+    .into())
 }
 
 fn resolve_install_root(args: &HooksInstallArgs) -> Result<PathBuf> {
@@ -189,21 +205,6 @@ fn hook_command_matches(hook: &Value, command: &str) -> bool {
         && hook.get("command").and_then(Value::as_str) == Some(command)
 }
 
-fn ensure_project_metadata(root: &Path, force: bool) -> Result<PathBuf> {
-    let path = root.join(CLAWHIP_PROJECT_FILE);
-    let project_name = root
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("unknown")
-        .to_string();
-    let content = serde_json::to_string_pretty(&json!({
-        "project": project_name,
-        "repo_name": project_name,
-    }))? + "\n";
-    write_generated_file(&path, &content, force)?;
-    Ok(path)
-}
-
 fn write_generated_file(path: &Path, content: &str, force: bool) -> Result<()> {
     if path.exists() && !force {
         return Ok(());
@@ -281,15 +282,97 @@ fn set_executable(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serial_test::serial;
     use tempfile::tempdir;
 
     #[test]
-    fn install_project_scope_writes_generic_provider_files() {
+    #[serial]
+    fn install_project_scope_writes_codex_hook_file_and_global_bridge() {
         let dir = tempdir().expect("tempdir");
+        let previous_home = std::env::var_os("HOME");
+        unsafe {
+            std::env::set_var("HOME", dir.path());
+        }
+
         let report = run_install(&HooksInstallArgs {
+            all: false,
+            provider: vec![HookProvider::Codex],
+            scope: HookInstallScope::Project,
+            root: Some(dir.path().to_path_buf()),
+            force: false,
+        })
+        .expect("project-scoped codex install should succeed");
+
+        assert!(
+            report
+                .generated_files
+                .contains(&dir.path().join(HOOK_SCRIPT))
+        );
+        assert!(
+            report
+                .generated_files
+                .contains(&dir.path().join(CODEX_HOOKS_FILE))
+        );
+        assert!(
+            report
+                .generated_files
+                .contains(&dir.path().join(CODEX_HOOKS_FILE))
+        );
+
+        if let Some(previous) = previous_home {
+            unsafe {
+                std::env::set_var("HOME", previous);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
+    }
+
+    #[test]
+    fn install_project_scope_rejects_claude() {
+        let dir = tempdir().expect("tempdir");
+        let error = run_install(&HooksInstallArgs {
+            all: false,
+            provider: vec![HookProvider::ClaudeCode],
+            scope: HookInstallScope::Project,
+            root: Some(dir.path().to_path_buf()),
+            force: false,
+        })
+        .expect_err("project-scoped claude install should be rejected");
+
+        assert!(error.to_string().contains("Claude Code"));
+    }
+
+    #[test]
+    fn install_project_scope_rejects_all_when_claude_is_implied() {
+        let dir = tempdir().expect("tempdir");
+        let error = run_install(&HooksInstallArgs {
             all: true,
             provider: Vec::new(),
             scope: HookInstallScope::Project,
+            root: Some(dir.path().to_path_buf()),
+            force: false,
+        })
+        .expect_err("project-scoped all-provider install should be rejected");
+
+        assert!(error.to_string().contains("Claude Code"));
+    }
+
+    #[test]
+    #[serial]
+    fn install_global_scope_writes_provider_files() {
+        let dir = tempdir().expect("tempdir");
+        let previous_home = std::env::var_os("HOME");
+        unsafe {
+            std::env::set_var("HOME", dir.path());
+        }
+
+        let report = run_install(&HooksInstallArgs {
+            all: true,
+            provider: Vec::new(),
+            scope: HookInstallScope::Global,
             root: Some(dir.path().to_path_buf()),
             force: false,
         })
@@ -303,11 +386,6 @@ mod tests {
         assert!(
             report
                 .generated_files
-                .contains(&dir.path().join(CLAWHIP_PROJECT_FILE))
-        );
-        assert!(
-            report
-                .generated_files
                 .contains(&dir.path().join(CODEX_HOOKS_FILE))
         );
         assert!(
@@ -315,6 +393,16 @@ mod tests {
                 .generated_files
                 .contains(&dir.path().join(CLAUDE_SETTINGS_FILE))
         );
+
+        if let Some(previous) = previous_home {
+            unsafe {
+                std::env::set_var("HOME", previous);
+            }
+        } else {
+            unsafe {
+                std::env::remove_var("HOME");
+            }
+        }
     }
 
     #[test]
